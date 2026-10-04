@@ -100,21 +100,41 @@ func TestRegionsTileTheScreenExactly(t *testing.T) {
 				t.Errorf("zones end at %d, terminal is %d wide", right, tc.w)
 			}
 
-			// Header, transcript and composer stack within the conversation.
+			// Header, its rule, the transcript and the composer stack within the
+			// conversation, in that order, with no gap and no overlap.
 			if l.Conversation.Height > 0 {
+				stack := []struct {
+					name string
+					r    Rect
+				}{
+					{"header", l.Header},
+					{"header rule", l.HeaderRule},
+					{"transcript", l.Transcript},
+					{"composer", l.Composer},
+				}
+
 				if l.Header.Y != l.Conversation.Y {
-					t.Errorf("header starts at %d, conversation at %d", l.Header.Y, l.Conversation.Y)
+					t.Errorf("header starts at %d, conversation at %d",
+						l.Header.Y, l.Conversation.Y)
 				}
 				if l.Composer.Bottom() != l.Conversation.Bottom() {
 					t.Errorf("composer bottom %d, conversation bottom %d",
 						l.Composer.Bottom(), l.Conversation.Bottom())
 				}
-				if l.Transcript.Y != l.Header.Bottom() {
-					t.Errorf("transcript starts at %d, header ends at %d", l.Transcript.Y, l.Header.Bottom())
-				}
-				if l.Transcript.Bottom() > l.Composer.Y {
-					t.Errorf("transcript ends at %d, overlapping the composer at %d",
-						l.Transcript.Bottom(), l.Composer.Y)
+
+				for i := 1; i < len(stack); i++ {
+					prev, cur := stack[i-1], stack[i]
+					if prev.r.Empty() {
+						// A sacrificed region is skipped rather than checked: on a very
+						// short terminal the header and its rule both give way, and
+						// asserting that the survivor still meets the void would be
+						// asserting on the arithmetic rather than on the layout.
+						continue
+					}
+					if cur.r.Y != prev.r.Bottom() {
+						t.Errorf("%s starts at %d but %s ends at %d",
+							cur.name, cur.r.Y, prev.name, prev.r.Bottom())
+					}
 				}
 			}
 		})

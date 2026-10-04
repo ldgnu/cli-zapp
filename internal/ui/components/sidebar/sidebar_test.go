@@ -571,3 +571,153 @@ func TestResizingDoesNotEscapeTheCursor(t *testing.T) {
 		}
 	}
 }
+
+// --- the action footer ---
+
+// hints builds the footer entries a real binding table would produce.
+func hints() []keybindings.HelpEntry {
+	return []keybindings.HelpEntry{ //nolint:lll // a table reads better on one line each
+		{Action: keybindings.ChatOpen, Keys: []string{"enter"}, Short: "abrir", Help: "Abrir la conversación"},
+		{
+			Action: keybindings.ActionToggleRead, Keys: []string{"ctrl+u"}, Short: "leída",
+			Help: "Marcar la conversación como leída",
+		},
+		{
+			Action: keybindings.ActionNewChat, Keys: []string{"ctrl+n"}, Short: "chats",
+			Help: "Abrir el menú de conversaciones",
+		},
+	}
+}
+
+func TestFooterIsPinnedToTheBottomRow(t *testing.T) {
+	s := fixture(t, rect(30, 12), "")
+	s.SetModel(component.Model{Chats: chatsFor(), Hints: hints()})
+
+	rows := render(s)
+	last := text.StripANSI(rows[len(rows)-1])
+
+	if !strings.Contains(last, "[enter]") {
+		t.Errorf("the last row should carry the action hint, got %q", last)
+	}
+}
+
+func TestFooterDoesNotMoveWhenTheListScrolls(t *testing.T) {
+	// The hint describes the row under the cursor. If it drifted up and down with the
+	// list it would stop describing anything.
+	many := make([]models.Chat, 0, 40)
+	for i := range 40 {
+		many = append(many, models.Chat{
+			ID: models.ChatID("c" + itoa(i)), Name: "Chat " + itoa(i), Timestamp: time.Now(),
+		})
+	}
+
+	build := func(offset int) string {
+		s := sidebar.New(keybindings.DefaultMap(), theme.Dark())
+		s.SetMode(layout.ModeFull)
+		s.Resize(rect(30, 10))
+		s.SetModel(component.Model{Chats: many, Hints: hints()})
+		s.Focus()
+		s.Scroll(offset)
+		rows := render(s)
+		return text.StripANSI(rows[len(rows)-1])
+	}
+
+	first, scrolled := build(0), build(12)
+	if first != scrolled {
+		t.Errorf("the footer moved with the list: %q then %q", first, scrolled)
+	}
+}
+
+func TestFooterTrimsRatherThanWrapping(t *testing.T) {
+	// Three hints do not fit a thirty-column sidebar. Dropping from the right keeps the
+	// first — which is the primary action — and never produces a second row, because a
+	// footer that wrapped would push the list up and the whole column would jitter.
+	for _, w := range []int{20, 26, 30, 40} {
+		s := sidebar.New(keybindings.DefaultMap(), theme.Dark())
+		s.SetMode(layout.ModeFull)
+		s.Resize(rect(w, 10))
+		s.SetModel(component.Model{Chats: []models.Chat{{ID: "1", Name: "Ada"}}, Hints: hints()})
+
+		rows := render(s)
+		if len(rows) != 10 {
+			t.Fatalf("at %d columns the sidebar produced %d rows", w, len(rows))
+		}
+		for i, r := range rows {
+			if got := text.VisibleWidth(r); got != w {
+				t.Errorf("at %d columns row %d is %d cells", w, i, got)
+			}
+		}
+		if !strings.Contains(text.StripANSI(rows[len(rows)-1]), "[") {
+			t.Errorf("at %d columns the footer vanished rather than trimming", w)
+		}
+	}
+}
+
+func TestNoFooterWithoutHints(t *testing.T) {
+	// A footer that exists but is empty is worse than none: it appears to offer an
+	// action and then does nothing when pressed.
+	s := fixture(t, rect(30, 12), "")
+
+	rows := render(s)
+	if strings.Contains(text.StripANSI(rows[len(rows)-1]), "[") {
+		t.Errorf("the footer should be absent when there is nothing to say, got %q", rows[len(rows)-1])
+	}
+}
+
+func TestNoFooterWhenThereIsNoRoom(t *testing.T) {
+	// Four rows is the brand, its rule, the search field and its rule. There is nothing
+	// left to fill, and a footer would leave the list with no rows at all.
+	s := sidebar.New(keybindings.DefaultMap(), theme.Dark())
+	s.SetMode(layout.ModeFull)
+	s.Resize(rect(30, 4))
+	s.SetModel(component.Model{
+		Chats: []models.Chat{{ID: "1", Name: "Ada"}, {ID: "2", Name: "Grace"}},
+		Hints: hints(),
+	})
+
+	rows := render(s)
+	if len(rows) != 4 {
+		t.Fatalf("produced %d rows", len(rows))
+	}
+	if strings.Contains(text.StripANSI(rows[3]), "[enter]") {
+		t.Errorf("no room for a footer, got %q", rows[3])
+	}
+}
+
+func TestFooterIsAbsentInMinimalMode(t *testing.T) {
+	// Minimal mode has no sidebar at all, so the footer goes with it.
+	s := sidebar.New(keybindings.DefaultMap(), theme.Dark())
+	s.SetMode(layout.ModeMinimal)
+	s.Resize(rect(30, 12))
+	s.SetModel(component.Model{
+		Chats: []models.Chat{{ID: "1", Name: "Ada"}},
+		Hints: hints(),
+	})
+
+	body := strings.Join(render(s), "\n")
+	if strings.Contains(body, "[enter]") {
+		t.Errorf("minimal mode should not draw a footer:\\n%s", body)
+	}
+}
+
+// chatsFor returns a short conversation list for a test that needs to re-supply the
+// state with hints attached, without restating the fixture.
+func chatsFor() []models.Chat {
+	return []models.Chat{
+		{ID: "1", Name: "Ada Lovelace", Timestamp: time.Now()},
+		{ID: "2", Name: "Grace Hopper", Timestamp: time.Now()},
+	}
+}
+
+// itoa renders a small index, for conversation identifiers in the tests.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}

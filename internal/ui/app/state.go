@@ -5,6 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/wterm/wterm/internal/keybindings"
+
 	"github.com/wterm/wterm/internal/models"
 	"github.com/wterm/wterm/internal/text"
 	"github.com/wterm/wterm/internal/ui/component"
@@ -112,6 +114,11 @@ func (m *Model) sharedState() component.Model {
 		Selected:      m.selected,
 		Search:        m.search,
 		SearchActive:  m.searching,
+		// The sidebar's footer is scoped to its own panel: the actions that apply to the
+		// highlighted conversation, not the ones that apply wherever the keyboard happens
+		// to be focused. It is the same list the status bar draws from, and the two can
+		// never disagree because there is only one of it.
+		Hints: m.keys.Hints(keybindings.PanelSidebar),
 	}
 }
 

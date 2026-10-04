@@ -14,31 +14,48 @@ below that resolves a conflict says which one won.
 ## 1. The three zones
 
 ```
-┌──────────────────────────┬─────────────────────────────────────────────────────────┐
-│ WTERM                    │ Ada Lovelace                              ● en línea     │
-│──────────────────────────│─────────────────────────────────────────────────────────│
-│ ⌕ Buscar chats…          │                          HOY                               │
-│──────────────────────────│ Did the analytical engine notes land?                    │
-│──────────────────────────│                                                          │
-│›Ada Lovelace     7 23:08📌│              I read the note on the looping notation.      │
-│ Grace Hopper      3 23:08│                                                          │
-│ Terminal Gophers 5 23:08🔇│                                    ✖ no se pudo enviar      │
-│ Alan Turing       1 23:08│                                                          │
-│                          │                                                          │
-├──────────────────────────┼─────────────────────────────────────────────────────────┤
-│                          │─────────────────────────────────────────────────────────│
-│                          │› Escribir mensaje…                                       │
-│                          │ enter enviar · alt+enter línea nueva                     │
-│                          │─────────────────────────────────────────────────────────│
-├──────────────────────────┴─────────────────────────────────────────────────────────┤
-│● en línea · Ada Lovelace · 11 sin leer     [enter] abrir  [ctrl+u] leída          │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ WTERM                    │Ada Lovelace                                           ● en línea  │
+│──────────────────────────│─────────────────────────────────────────────────────────────────  │
+│⌕ Buscar chats…           │ They did. I started on the Bernoulli table this                   │
+│──────────────────────────│ morning.                                                          │
+│ Ada Lovelace  7  13:55 📌│ One question: the looping notation. Is it the                      │
+│ Grace Hopper     3  13:55│ same as your punch cards?                                         │
+│ Terminal Gop… 8  13:55 🔇│ It's the same idea. Cards in, results out, no                      │
+│ Alan Turing      1  13:55│ room for interpretation.                                          │
+│                          │ That is reassuring. I will review it tonight.                     │
+│                          │ 13:55                                                             │
+│                          │                    I read the note on the looping notation this   │
+│                          │                                                        morning.   │
+│                          │                    One thing is still unclear to me: the store.   │
+│                          │                    Where does the result go while the cards are   │
+│                          │                               being read, and who decides that?   │
+│                          │                          I will send the rest tonight, promise.   │
+│                          │                                             ✖ no se pudo enviar   │
+│                          │─────────────────────────────────────────────────────────────────  │
+│                          │› Escribir mensaje…                                                │
+│                          │enter enviar · alt+enter línea nueva                               │
+│ [enter] abrir            │─────────────────────────────────────────────────────────────────  │
+│● en línea · Ada Lovelace ·  11  sin leer     [r] responder  [R] reaccionar  [ctrl+c] copiar  │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Sidebar, conversation, status bar.** The same division every messenger uses, because
-it is the division the task has. The status bar is the addition: an i3 user reads the
-status line constantly, and a chat client with no status line makes them guess whether
-a message failed to send.
+The three bands at the bottom are three different questions, and each answers one:
+
+| Band | Question |
+|---|---|
+| Sidebar footer | What can I do with *this* conversation? |
+| Composer | What do I want to say? |
+| Status bar | What is the state of the world? |
+
+Merging the first into the status bar was tried and rejected: the footer describes the
+row under the cursor, and putting it at the far end of a bar shared with the connection
+state means the answer is as far from the thing it applies to as the terminal is wide.
+
+The division itself — sidebar, conversation, status bar — is the one every messenger
+uses, because it is the division the task has. The status bar is the addition: an i3
+user reads the status line constantly, and a chat client with no status line makes them
+guess whether a message failed to send.
 
 ### Why one row per conversation
 
@@ -46,6 +63,27 @@ WhatsApp Web uses two lines per conversation: the name above, the preview below.
 terminal cannot afford it. At 24 rows, a two-line list holds eleven conversations; a
 one-line list holds twenty-three. The preview is the first thing to go, and it is gone
 by 34 columns of sidebar width.
+
+### Why a rule under the header
+
+One row, spent separating *who* you are talking to from *what* was said. Without it the
+contact's name sits directly on top of the first message and the two read as one block,
+which is the exact ambiguity the header exists to remove.
+
+It is the first thing to go when rows are scarce, after the header itself: a rule is
+chrome, and at that size every row belongs to the conversation.
+
+### Why the sidebar footer is data, not a string
+
+The footer renders entries from the binding table, the same ones the status bar uses and
+the same ones the help sheet lists. A component that hardcoded `[n] Nuevo` would have to
+be edited the day the binding changed, and would disagree with the help sheet from the
+moment anyone rebound it. One list, three surfaces, no way for them to drift.
+
+Two entries at most, trimmed from the right. A footer listing every binding is a footer
+listing none, because the binding the user needs is as likely to be the fourth as the
+first. And the footer is pinned to the last row rather than appended after the list, so it
+describes the same row whatever the list's length.
 
 ### Why the sidebar scrolls independently
 

@@ -380,9 +380,10 @@ func (m *Model) composeBase(l layout.Layout) string {
 	// composer would leave a gap that lipgloss fills with the wider block's padding.
 	conversation := m.paintStack([]string{
 		m.viewHeader(),
+		m.viewHeaderRule(),
 		m.transcript.View(),
 		m.composer.View(),
-	}, []layout.Rect{l.Header, l.Transcript, l.Composer})
+	}, []layout.Rect{l.Header, l.HeaderRule, l.Transcript, l.Composer})
 
 	return lipgloss.JoinVertical(lipgloss.Top,
 		lipgloss.JoinHorizontal(lipgloss.Top,
@@ -469,6 +470,21 @@ func (m *Model) viewHeader() string {
 	}
 
 	return text.PadRight(name+strings.Repeat(" ", gap)+right, r.Width)
+}
+
+// viewHeaderRule draws the separator between the header and the transcript.
+//
+// It belongs to the root rather than to a region because it spans the conversation
+// column as a whole: the header's identity and the transcript's content are drawn by
+// different code and only the root knows both, which makes the root the only place the
+// boundary between them can live.
+func (m *Model) viewHeaderRule() string {
+	r := m.layout.HeaderRule
+	if r.Empty() {
+		return ""
+	}
+	return m.theme.Styles.Divider.Render(
+		strings.Repeat(m.theme.Glyphs.Divider, maxInt(r.Width, 0)))
 }
 
 // headerRight renders the presence or typing notice.

@@ -105,6 +105,21 @@ const (
 
 	// HeaderHeight is the contact header band.
 	HeaderHeight = 1
+	// HeaderRuleHeight is the rule between the header and the transcript.
+	//
+	// One row, spent on separating *who* you are talking to from *what* was said.
+	// Without it the contact's name sits directly on top of the first message, and
+	// the two read as one block — which is exactly the ambiguity the header exists to
+	// remove. On a narrow terminal it is the first thing to go, after the header itself.
+	HeaderRuleHeight = 1
+	// SidebarFooterHeight is the action row at the bottom of the sidebar.
+	//
+	// It is not decoration. The status bar along the bottom says what *is*; this says
+	// what you can *do* where the cursor is, which is a different question and needs a
+	// different place. Showing "enter abrir" beside the list, rather than at the far end
+	// of a bar shared with the connection state, puts the answer next to the thing it
+	// applies to.
+	SidebarFooterHeight = 1
 	// ComposerHeight is the multiline input area in the full layout: a rule, the draft,
 	// the contextual hint and a rule.
 	//
@@ -184,6 +199,9 @@ type Layout struct {
 
 	// Header is the contact name band inside Conversation.
 	Header Rect
+	// HeaderRule separates the header from the transcript. Empty when there is no room
+	// for it.
+	HeaderRule Rect
 	// Transcript is the scrollable message area inside Conversation.
 	Transcript Rect
 	// Composer is the multiline input inside Conversation.
@@ -239,22 +257,29 @@ func Compute(width, height int) Layout {
 		composerH = ComposerHeight - 1
 	}
 
-	head := HeaderHeight
-	body := conv.Height - head - composerH
-	if body < 1 {
-		// Extremely short terminal: sacrifice the header rather than leaving no
-		// room to read. The chat is still identifiable from the sidebar.
-		head = 0
-		body = max(conv.Height-composerH, 1)
+	// The rule goes before the transcript, and both go before the header does.
+	head, rule := HeaderHeight, HeaderRuleHeight
+	body := conv.Height - head - rule - composerH
+
+	switch {
+	case body < 1 && rule > 0:
+		rule, body = 0, max(conv.Height-head-composerH, 0)
+	case body < 1 && head > 0:
+		// Extremely short terminal: sacrifice the header rather than leaving no room to
+		// read. The conversation is still identifiable from the sidebar.
+		head, body = 0, max(conv.Height-rule-composerH, 0)
 	}
 
 	l.Header = Rect{X: conv.X, Y: conv.Y, Width: conv.Width, Height: head}
-	l.Transcript = Rect{X: conv.X, Y: conv.Y + head, Width: conv.Width, Height: max(body, 0)}
+	l.HeaderRule = Rect{X: conv.X, Y: conv.Y + head, Width: conv.Width, Height: rule}
+
+	transcriptY := conv.Y + head + rule
+	l.Transcript = Rect{X: conv.X, Y: transcriptY, Width: conv.Width, Height: max(body, 0)}
 	l.Composer = Rect{
 		X:      conv.X,
-		Y:      conv.Y + head + max(body, 0),
+		Y:      transcriptY + max(body, 0),
 		Width:  conv.Width,
-		Height: min(composerH, max(conv.Height-head, 0)),
+		Height: min(composerH, max(conv.Height-head-rule, 0)),
 	}
 
 	return l

@@ -48,6 +48,8 @@ type Model struct {
 	theme  theme.Theme
 	offset int
 	cursor int
+	// hints are the action labels for the footer, supplied by the application.
+	hints []keybindings.HelpEntry
 	// chats is the application's list; rows is what survives the query.
 	chats []models.Chat
 	// rows is the filtered, visible chat list.
@@ -100,6 +102,8 @@ func (m *Model) Focused() bool { return m.focus }
 
 // SetModel supplies the application's shared state.
 func (m *Model) SetModel(s component.Model) {
+	m.hints = s.Hints
+
 	// The selected conversation is remembered by identifier, not by index.
 	//
 	// The list re-sorts whenever a conversation is pinned, so the row that was at index
@@ -142,18 +146,47 @@ func (m *Model) searchFieldHeight() int {
 }
 
 // listRect returns the rectangle available for chat rows.
+//
+// The footer is excluded because it is pinned to the bottom: the rows fill whatever is
+// left between the search field and it, so the action hint does not move when the list
+// grows or scrolls.
 func (m *Model) listRect() layout.Rect {
-	brand := 0
-	if m.showBrand {
-		brand = layout.BrandHeight + 1 // the banner plus its rule
+	return layout.Rect{
+		X:      m.rect.X,
+		Y:      m.rect.Y + brandRows(m) + searchRows(m),
+		Width:  m.rect.Width,
+		Height: maxInt(m.rect.Height-brandRows(m)-searchRows(m)-m.footerHeight(), 0),
 	}
-	h := m.rect.Height - brand - m.searchFieldHeight()
-	if h < 0 {
-		h = 0
+}
+
+// footerHeight is how many rows the action footer takes, or none when there is nothing
+// to say or no room to say it.
+//
+// A footer that exists but is empty is worse than no footer: the action it appears to
+// offer turns out not to work, which is the specific confusion it was added to prevent.
+func (m *Model) footerHeight() int {
+	// Minimal mode has no sidebar, so it has no footer either. Gating on the hints alone
+	// left the action row drawn over a column that is not supposed to exist.
+	if !m.showSearchField || len(m.hints) == 0 {
+		return 0
+	}
+	// The brand, its rule, the search field, its rule and at least one row: below that
+	// the footer would leave the list with nothing to show.
+	if m.rect.Height < layout.BrandHeight+layout.SearchHeight+3 {
+		return 0
+	}
+	return layout.SidebarFooterHeight
+}
+
+// footerRect returns the action row's rectangle, empty when there is no footer.
+func (m *Model) footerRect() layout.Rect {
+	h := m.footerHeight()
+	if h == 0 {
+		return layout.Rect{}
 	}
 	return layout.Rect{
 		X:      m.rect.X,
-		Y:      m.rect.Y + brand + m.searchFieldHeight(),
+		Y:      m.rect.Bottom() - h,
 		Width:  m.rect.Width,
 		Height: h,
 	}
@@ -392,6 +425,14 @@ func (m *Model) ClickAt(x, y int) tea.Cmd {
 }
 
 // View implements [component.Region].
+//
+// # The frame is exact by construction
+//
+// The rows are assembled into a slice of exactly [Model.rect]'s height and the footer is
+// placed at the last index, rather than being appended after whatever the rows happened
+// to produce. Counting on the append to land right is how the action hint ended up one
+// cell short and one row too tall: both were invisible until a test compared the frame
+// against the rectangle it was given, which is the only thing that can catch it.
 func (m *Model) View() string {
 	if m.rect.Empty() {
 		return ""
@@ -399,37 +440,108 @@ func (m *Model) View() string {
 	st := m.theme.Styles
 	g := m.theme.Glyphs
 
-	var b strings.Builder
+	lines := make([]string, m.rect.Height)
+	blank := strings.Repeat(" ", m.rect.Width)
+	for i := range lines {
+		lines[i] = blank
+	}
+
+	row := 0
+	put := func(s string, rows int) {
+		for r := range rows {
+			if row+r >= len(lines) {
+				return
+			}
+			lines[row+r] = s
+		}
+		row += rows
+	}
 
 	if m.showBrand {
-		b.WriteString(m.viewBrand(st, g))
-		b.WriteByte('\n')
+		put(text.PadRight(m.viewBrandMark(st), m.rect.Width), 1)
+		put(m.rule(st, g), 1)
 	}
 	if m.showSearchField {
-		b.WriteString(m.viewSearch(st, g))
-		b.WriteByte('\n')
+		put(m.viewSearch(st, g), 1)
+		put(m.rule(st, g), 1)
 	}
 
-	visible := m.visibleRows()
-
-	for i := range visible {
+	// The rows fill whatever is between the search field and the footer. Padding is not
+	// written: the slice is already blank, and writing blanks over blanks is how the
+	// arithmetic used to go wrong.
+	list := m.listRect()
+	for i := range list.Height {
 		idx := m.offset + i
 		if idx >= len(m.rows) {
-			b.WriteString(strings.Repeat(" ", m.rect.Width))
-			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString(m.viewRow(m.rows[idx], idx == m.cursor, st, g))
-		b.WriteByte('\n')
+		if r := list.Y + i; r < len(lines) {
+			lines[r] = m.viewRow(m.rows[idx], idx == m.cursor, st, g)
+		}
 	}
 
-	// Pad to the full height so the sidebar's background reaches the bottom edge.
-	for range maxInt(0, m.rect.Height-1-(brandRows(m)+searchRows(m)+visible)) {
-		b.WriteString(strings.Repeat(" ", m.rect.Width))
-		b.WriteByte('\n')
+	if footer := m.footerRect(); !footer.Empty() {
+		if footer.Y < len(lines) {
+			lines[footer.Y] = m.viewFooter(st, g)
+		}
 	}
 
-	return strings.TrimRight(b.String(), "\n")
+	return strings.Join(lines, "\n")
+}
+
+// viewBrandMark renders the wordmark on its own, without its rule.
+func (m *Model) viewBrandMark(st theme.Styles) string {
+	if m.focus {
+		return st.Accent.Bold(true).Render(" " + m.theme.Brand)
+	}
+	return st.Muted.Render(" " + m.theme.Brand)
+}
+
+// viewFooter renders the action hint for the selected conversation.
+//
+// Two entries at most, and trimmed from the right: a footer listing every binding is a
+// footer listing none, because the one the user needs is as likely to be the fourth as
+// the first.
+func (m *Model) viewFooter(st theme.Styles, g theme.Glyphs) string {
+	const maxHints = 2
+
+	shown := m.hints
+	if len(shown) > maxHints {
+		shown = shown[:maxHints]
+	}
+
+	// Entries are dropped from the right until the row fits. A footer that wrapped
+	// would push the list up and the whole column would jitter, so trimming is the
+	// only acceptable way to be too wide.
+	line := m.renderHints(st, g, shown)
+	for line != "" && text.VisibleWidth(line)+1 > m.rect.Width {
+		shown = shown[:len(shown)-1]
+		line = m.renderHints(st, g, shown)
+	}
+
+	// Padded rather than truncated: the row is the full width of the column, and a
+	// short one leaves the sidebar's background stopping short of the divider.
+	return text.PadRight(text.TruncateStyled(line, maxInt(m.rect.Width, 0)), m.rect.Width)
+}
+
+// renderHints builds a hint row from a slice of entries.
+func (m *Model) renderHints(st theme.Styles, g theme.Glyphs, hints []keybindings.HelpEntry) string {
+	parts := make([]string, 0, len(hints))
+	for _, h := range hints {
+		if len(h.Keys) == 0 {
+			continue
+		}
+		label := h.Short
+		if label == "" {
+			label = h.Help
+		}
+		key := st.StatusKey.Render(g.KeyHintOpen + h.Keys[0] + g.KeyHintClose)
+		parts = append(parts, key+" "+st.StatusLabel.Render(label))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, "  ")
 }
 
 func brandRows(m *Model) int {
@@ -442,23 +554,16 @@ func brandRows(m *Model) int {
 func searchRows(m *Model) int { return m.searchFieldHeight() }
 
 // viewBrand renders the wordmark and its rule.
-func (m *Model) viewBrand(st theme.Styles, g theme.Glyphs) string {
-	mark := " " + m.theme.Brand
-	if m.focus {
-		mark = st.Accent.Bold(true).Render(mark)
-	} else {
-		mark = st.Muted.Render(mark)
-	}
-
-	return text.PadRight(mark, m.rect.Width) + "\n" + m.rule(g, st)
-}
-
 // rule renders the horizontal rule that separates the sidebar's bands.
-func (m *Model) rule(g theme.Glyphs, st theme.Styles) string {
+func (m *Model) rule(st theme.Styles, g theme.Glyphs) string {
 	return st.Divider.Render(strings.Repeat(g.Divider, maxInt(m.rect.Width, 0)))
 }
 
-// viewSearch renders the search field and its rule.
+// viewSearch renders the search field on its own, without its rule.
+//
+// Padded to the column's width rather than left short: the sidebar's background has to
+// reach the divider, or the frame shows a stripe of the terminal's own colour down the
+// side of the column.
 func (m *Model) viewSearch(st theme.Styles, g theme.Glyphs) string {
 	var b strings.Builder
 
@@ -486,7 +591,7 @@ func (m *Model) viewSearch(st theme.Styles, g theme.Glyphs) string {
 		b.WriteString(st.Muted.Render(prompt + text.PadRight("Buscar chats…", room)))
 	}
 
-	return strings.TrimSuffix(b.String(), "\n") + "\n" + m.rule(g, st)
+	return b.String()
 }
 
 // viewRow renders one chat line.

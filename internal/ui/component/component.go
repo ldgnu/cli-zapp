@@ -30,6 +30,7 @@ package component
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/wterm/wterm/internal/keybindings"
 	"github.com/wterm/wterm/internal/models"
 	"github.com/wterm/wterm/internal/ui/layout"
 )
@@ -246,4 +247,11 @@ type Model struct {
 	Search string
 	// SearchActive reports whether the search field has focus.
 	SearchActive bool
+	// Hints are the key hints the sidebar's footer offers for the selected row.
+	//
+	// They arrive as data rather than being composed from the region's own key
+	// knowledge, for the same reason every other binding does: a component that knew
+	// what ctrl+n meant would have to be edited when the binding changed, and would
+	// disagree with the help sheet the moment someone rebounded it.
+	Hints []keybindings.HelpEntry
 }
