@@ -94,6 +94,15 @@ type Model struct {
 	search    string
 	searching bool
 
+	// limiter caps outgoing message rate.
+	//
+	// It is here rather than in the adapter because the thing it protects against is
+	// a defect in this program: a stuck key repeat or a retry loop producing a burst
+	// is what gets an account restricted, and the adapter cannot tell that burst apart
+	// from a user who meant it. See ratelimit.go for why this is a brake and not an
+	// evasion.
+	limiter sendLimiter
+
 	// opened is the conversation whose transcript is cached in messages.
 	//
 	// It is separate from the sidebar's cursor on purpose: the cursor says which row
@@ -169,6 +178,7 @@ func New(services whatsapp.Services, t theme.Theme, keys keybindings.Map) *Model
 		focus:       component.RegionSidebar,
 		selected:    make(map[models.MessageID]bool),
 		senderNames: make(map[models.ContactID]string),
+		limiter:     sendLimiterDefault,
 		loc:         time.Local,
 	}
 

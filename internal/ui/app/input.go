@@ -453,6 +453,14 @@ func (m *Model) submitDraft() tea.Cmd {
 	// The mode is read before the composer is cleared, because clearing resets it.
 	mode := m.composer.Mode()
 
+	// The limiter is consulted before the draft is cleared, so a refused send keeps
+	// the text in the composer. A limit that throws away what the user wrote is worse
+	// than no limit: they would have to retype it, and the next `enter` — pressed out
+	// of frustration rather than thought — would hit the limit again.
+	if ok, reason := m.limiter.allow(time.Now()); !ok {
+		return m.toast(reason, true)
+	}
+
 	// The command is built before the fields are cleared, because the command reads
 	// them. Clearing first and building afterwards sends an edit against an empty
 	// message identifier, which the service rejects — and the symptom is a toast

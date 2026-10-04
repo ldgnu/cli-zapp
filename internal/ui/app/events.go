@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/cli-zapp/cli-zapp/internal/keybindings"
@@ -149,6 +151,24 @@ func (m *Model) sendDraft(body string, mode composer.Mode) tea.Cmd {
 	if !ok {
 		return nil
 	}
+
+	// The limiter is checked here, on the event path, rather than in submitDraft.
+	//
+	// Those are two different send routes: submitDraft is mod+enter on the focused
+	// region, while this is the composer consuming enter itself and emitting
+	// KindSubmit. Wiring the limit into only one of them leaves the other unbounded,
+	// and enter is the key a runaway repeat actually presses.
+	//
+	// The draft is restored on refusal. The composer has already cleared its buffer
+	// by the time the event arrives — it clears before emitting — so returning a
+	// refusal here without putting the text back means the user's message vanishes.
+	// A limit that eats what someone wrote is worse than no limit: they retype it,
+	// press enter again out of frustration, and are refused again.
+	if allowed, reason := m.limiter.allow(time.Now()); !allowed {
+		m.composer.Restore(body, mode)
+		return m.toast(reason, true)
+	}
+
 	cmd := m.send(chat.ID, body, mode)
 	m.replyTo, m.editing = nil, ""
 	return cmd

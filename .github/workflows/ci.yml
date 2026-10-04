@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `master` is this repository's default branch. Listing only `main` would mean
+    # CI never runs on a push, and a workflow that silently never triggers is worse
+    # than no workflow: it reads as "CI is green" on a branch nobody checks.
+    branches: [master, main]
   pull_request:
 
 # Cancel superseded runs on the same branch: a push while a PR is open makes the

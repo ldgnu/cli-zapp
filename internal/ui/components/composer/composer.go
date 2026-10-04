@@ -191,6 +191,29 @@ func (m *Model) Clear() {
 	m.ClearMode()
 }
 
+// Restore puts text and a mode back after the input was cleared.
+//
+// It exists because the composer clears its own buffer *before* emitting the submit
+// event, which is the right order — the widget should not be holding a draft the user
+// has already sent. But it means a send refused after that point, by the rate limiter,
+// would silently eat what the user typed.
+//
+// Restoring is therefore not optional politeness: without it, hitting the limit
+// deletes the message. The user would retype it, press enter again out of
+// frustration, and be refused again — and would conclude the composer is broken
+// rather than that they are sending too fast.
+func (m *Model) Restore(body string, mode Mode) {
+	m.ta.Reset()
+	m.ta.InsertString(body)
+	m.ta.MoveToEnd()
+
+	// The mode is restored but not the reply/edit banners: those are held by the root,
+	// which clears them on a successful send and leaves them alone on a refusal, so
+	// re-setting the composer to reply-without-a-quote would show a mode the transcript
+	// does not agree with.
+	m.mode = mode
+}
+
 // Cursor exposes the caret position for the root to place the terminal cursor.
 func (m *Model) Cursor() (x, y int, visible bool) {
 	cur := m.ta.Cursor()
