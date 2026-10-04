@@ -196,32 +196,70 @@ const (
 
 // Command is an application action the palette can offer.
 //
-// The palette does not know what a command does; it names them, and the root
-// dispatches. That keeps the palette free of application behaviour, and means a
-// new command is one entry in a table rather than a new branch in the renderer.
+// # The shape
+//
+//	ID          stable identifier, used in configuration and in tests
+//	Title       the short label shown in the list
+//	Description one sentence, shown for the highlighted command
+//	Shortcut    the keys, shown right-aligned
+//	Category    the heading it appears under
+//	Available   whether it can run right now
+//	Danger      whether it destroys something
+//	Execute     what it does
+//
+// # Who runs it, and who does not
+//
+// Execute is a closure the application builds and the palette never calls. The palette
+// filters a list of these and emits the chosen one; the application runs it.
+//
+// That split is the whole reason the component can be reused and the behaviour cannot
+// leak into it. A palette that called Execute itself would need the application's state
+// to pass in, which means it is no longer a component but a second copy of the
+// application. Keeping the call on the application's side is also what lets a command
+// be added in one place — see [Command.Execute] for why that matters.
+//
+// # Available is a bool, not a predicate
+//
+// It could be a func() bool evaluated at render time, and was. The problem is that the
+// table is a value that the palette holds, so a closure would capture the state at the
+// moment the table was built and then go stale — "Responder" would stay greyed after the
+// user selected a message. Rebuilding the table whenever the state it depends on changes
+// is one line at one place and cannot go stale, because there is nothing to capture.
+//
+// The same applies to Execute, and for the same reason: it is not a stored closure over
+// an old state, it is a fresh one each time the table is rebuilt.
 type Command struct {
-	// ID is the stable identifier used to dispatch.
+	// ID is the stable identifier used in configuration and in tests.
 	ID string
-	// Title is the short label shown in the palette.
+	// Title is the short label shown in the list.
 	Title string
-	// Hint is the keyboard shortcut, shown right-aligned.
-	Hint string
-	// Section groups related commands in the palette.
-	Section string
+	// Description is one sentence about what the command does, shown for whichever
+	// command is highlighted.
+	//
+	// It exists because the list is scannable by title but not always informative:
+	// "Archivar" and "Marcar como no leída" are both clear, while "Sincronizar" is
+	// three words that do not say it reconnects and refetches.
+	Description string
+	// Shortcut is the keyboard shortcut, shown right-aligned.
+	Shortcut string
+	// Category is the heading the command appears under.
+	Category string
 	// Danger marks a destructive command, so the palette can render it differently
 	// from the reversible ones beside it.
 	Danger bool
 	// Available reports whether the command can run right now.
 	//
 	// A command that cannot run is shown greyed rather than hidden, so the user can
-	// see that it exists. That is the whole reason this is a field and not a filter
-	// applied when the table is built: "responder" with no message selected should
-	// look unavailable, not missing.
-	//
-	// It is a plain bool rather than a predicate because the table is rebuilt
-	// whenever the state it depends on changes, and a closure in a value that is
-	// copied every frame would be captured once and then go stale.
+	// see that it exists. That is the whole reason this is a field rather than a filter
+	// applied when the table is built: "Responder" with no message selected should look
+	// unavailable, not missing.
 	Available bool
+	// Execute runs the command. The application sets it; the palette never calls it.
+	//
+	// A nil Execute means the command is declared but not implemented, which the
+	// application reports rather than ignoring: a palette entry that looks right and
+	// does nothing is the failure mode this whole design exists to make visible.
+	Execute func() tea.Cmd
 }
 
 // Model is the shared state a region needs in order to render.

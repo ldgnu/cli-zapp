@@ -77,12 +77,14 @@ func (m *Model) onEvent(e component.Event) tea.Cmd {
 		return nil
 
 	case component.KindCommandChosen:
-		if a, ok := commandAction[e.Command.ID]; ok {
-			return m.run(a)
+		// The command carries what it does. The palette chose it; the application runs
+		// it, which is the whole of the split between the two.
+		if e.Command.Execute == nil {
+			// Declared but not implemented, which is a table bug. Saying so beats a
+			// palette entry that looks right and does nothing.
+			return m.toast("comando no implementado: "+e.Command.ID, true)
 		}
-		// A command with no action behind it is a table bug. Refusing loudly in a
-		// toast beats a key that silently does nothing.
-		return m.toast("comando no implementado: "+e.Command.ID, true)
+		return e.Command.Execute()
 
 	case component.KindDismissOverlay:
 		m.palette.Close()

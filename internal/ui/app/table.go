@@ -1,36 +1,39 @@
 package app
 
 import (
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/cli-zapp/cli-zapp/internal/keybindings"
 	"github.com/cli-zapp/cli-zapp/internal/ui/component"
 )
 
-// Sections the palette groups commands under.
+// Categories the palette groups commands under.
 //
-// The grouping is by what the command acts on rather than by where it lives in the
-// code, because that is how a user looking for "how do I mute this?" thinks about it.
+// The grouping is by what a command acts on rather than by where it lives in the code,
+// because that is how someone looking for "how do I mute this?" thinks about it.
 const (
-	sectionChat   = "Conversación"
-	sectionMsg    = "Mensaje"
-	sectionWindow = "Aplicación"
+	categoryChat   = "Conversación"
+	categoryMsg    = "Mensaje"
+	categoryWindow = "Aplicación"
 )
 
 // rebuildCommands regenerates the palette's command table.
 //
 // It is rebuilt whenever the state changes rather than held constant, because several
-// commands are only meaningful in context: "responder" needs a message under the
-// cursor, "eliminar conversación" needs an open conversation.
+// commands are only meaningful in context: "Responder" needs a message under the cursor,
+// "Eliminar conversación" needs an open conversation.
 //
 // A command that cannot run right now is listed and greyed rather than hidden. That is
-// the whole reason for the Available field: it is the difference between a feature the
-// user has not found yet and a feature that is missing.
+// the difference between a feature the user has not found yet and a feature that is
+// missing.
 //
-// # The table is the only place a command is named
+// # One line per command
 //
-// The palette does not dispatch; it emits the [component.Command] it was configured
-// with and the root resolves it by action through [commandAction]. A command in this
-// table and an action in [keybindings] are the same thing seen from two directions,
-// and keeping the pairing in one map is what stops the two lists from drifting.
+// Every entry is built by [Model.command], which wires the description, the shortcut and
+// the action to execute. Adding a command is one line here and nowhere else — there is no
+// dispatch table to update in parallel, and no way for the two to disagree about what a
+// command does. That is the extensibility requirement: the palette is a list of values
+// and the application decides what running one means.
 func (m *Model) rebuildCommands() {
 	chat := m.hasOpenChat()
 	msg := m.hasCursorMessage()
@@ -39,91 +42,86 @@ func (m *Model) rebuildCommands() {
 
 	m.commands = []component.Command{
 		// Conversations.
-		entry("open", "Abrir conversación", "mod+enter", sectionChat, chat, false),
-		entry("search", "Buscar", "mod+f", sectionChat, true, false),
-		entry("info", "Información del contacto", "mod+g", sectionChat, chat, false),
-		entry("new_chat", "Ir a otra conversación", "mod+n", sectionChat, true, false),
-
-		// Conversation flags. Read and unread are two entries rather than one toggling
-		// command because the user knows which state they want, not which key flips it.
-		entry("toggle_read", "Marcar como leída", "mod+u", sectionChat, chat, false),
-		entry("toggle_unread", "Marcar como no leída", "", sectionChat,
-			chat && m.chatHasUnread(), false),
-		entry("toggle_pin", "Anclar conversación", "mod+p", sectionChat, chat, false),
-		entry("toggle_mute", "Silenciar conversación", "mod+m", sectionChat, chat, false),
-		entry("toggle_archive", "Archivar conversación", "mod+e", sectionChat, chat, false),
-		entry("delete_chat", "Eliminar conversación", "mod+backspace", sectionChat, chat, true),
+		m.command("open", "Abrir conversación", "Abre la conversación resaltada", "mod+enter",
+			categoryChat, chat, false, keybindings.ChatOpen),
+		m.command("search", "Buscar", "Filtra las conversaciones por nombre o mensaje", "mod+f",
+			categoryChat, true, false, keybindings.ActionSearch),
+		m.command("info", "Información", "Teléfono, nota y presencia del contacto", "mod+g",
+			categoryChat, chat, false, keybindings.ActionInfo),
+		m.command("new_chat", "Nueva conversación", "Abre el menú de conversaciones", "mod+n",
+			categoryChat, true, false, keybindings.ActionNewChat),
+		// Pin and mark-read are here rather than on a key because their keys were worth
+		// less than the palette's. Leaving a flag out of the table entirely would make
+		// it unreachable, which is the one outcome worse than giving up the shortcut.
+		m.command("pin", "Anclar", "Mantiene la conversación al principio de la lista", "",
+			categoryChat, chat, false, keybindings.ActionTogglePin),
+		m.command("mark_read", "Marcar como leída", "Quita la insignia de no leídas", "mod+u",
+			categoryChat, chat && m.chatHasUnread(), false, keybindings.ActionToggleRead),
+		m.command("archive", "Archivar", "Mueve la conversación fuera de la lista", "",
+			categoryChat, chat, false, keybindings.ActionToggleArchive),
+		m.command("delete_chat", "Eliminar conversación",
+			"Borra la conversación y sus mensajes en este dispositivo", "",
+			categoryChat, chat, true, keybindings.ActionDeleteChat),
 
 		// Messages.
-		entry("reply", "Responder", "r", sectionMsg, msg, false),
-		entry("edit", "Editar mensaje", "mod+e", sectionMsg, msg && outgoing, false),
-		entry("react", "Reaccionar", "R", sectionMsg, msg, false),
-		entry("forward", "Reenviar", "", sectionMsg, msg, false),
-		entry("copy", "Copiar mensaje", "mod+c", sectionMsg, msg, false),
-		entry("select", "Seleccionar mensaje", "space", sectionMsg, msg, false),
-		entry("select_all", "Seleccionar todos", "mod+a", sectionMsg, msg, false),
-		entry("download", "Descargar adjunto", "mod+s", sectionMsg, media, false),
-		entry("open_attachment", "Abrir adjunto", "mod+o", sectionMsg, media, false),
-		entry("delete_message", "Eliminar mensaje", "mod+d", sectionMsg, msg, true),
+		m.command("reply", "Responder", "Responde citando el mensaje", "r",
+			categoryMsg, msg, false, keybindings.ActionReply),
+		m.command("edit", "Editar mensaje", "Reemplaza el cuerpo del mensaje", "",
+			categoryMsg, msg && outgoing, false, keybindings.ActionEdit),
+		m.command("react", "Reaccionar", "Añade una reacción al mensaje", "R",
+			categoryMsg, msg, false, keybindings.ActionReact),
+		m.command("forward", "Reenviar", "Envía el mensaje a otra conversación", "",
+			categoryMsg, msg, false, keybindings.ActionForward),
+		m.command("copy", "Copiar", "Pone el mensaje en el portapapeles", "",
+			categoryMsg, msg, false, keybindings.ActionCopy),
+		m.command("select", "Seleccionar mensaje", "Marca el mensaje para una acción", "x",
+			categoryMsg, msg, false, keybindings.ActionSelect),
+		m.command("select_all", "Seleccionar todos", "Marca todos los mensajes", "mod+a",
+			categoryMsg, msg, false, keybindings.ActionSelectAll),
+		m.command("download", "Descargar adjunto", "Guarda el archivo en disco", "",
+			categoryMsg, media, false, keybindings.ActionDownload),
+		m.command("open_attachment", "Abrir adjunto", "Abre el archivo fuera del terminal", "",
+			categoryMsg, media, false, keybindings.ActionOpen),
+		m.command("delete_message", "Eliminar mensaje", "Lo elimina para todos", "",
+			categoryMsg, msg, true, keybindings.ActionDelete),
 
 		// Application.
-		entry("sync", "Reconectar y sincronizar", "mod+r", sectionWindow, true, false),
-		entry("help", "Atajos de teclado", "mod+?", sectionWindow, true, false),
-		entry("cancel", "Cancelar", "esc", sectionWindow,
-			m.hasAnythingToCancel(), false),
-		entry("quit", "Salir", "mod+q", sectionWindow, true, false),
+		m.command("sync", "Sincronizar", "Reconecta y recupera el historial perdido", "mod+r",
+			categoryWindow, true, false, keybindings.ActionSync),
+		m.command("help", "Keybindings", "Muestra esta application's atajos", "mod+?",
+			categoryWindow, true, false, keybindings.ActionHelp),
+		m.command("cancel", "Cancelar", "Abandona el modo actual", "esc",
+			categoryWindow, m.hasAnythingToCancel(), false, keybindings.ActionCancel),
+		m.command("quit", "Salir", "Cierra la aplicación", "mod+q",
+			categoryWindow, true, false, keybindings.ActionQuit),
 	}
 
 	m.palette.SetCommands(m.commands)
 }
 
-// entry builds one palette command.
+// command builds one palette entry, wiring the action it runs.
 //
 // The parameters are positional because the alternative is a struct literal per
 // command, and twenty of those with four booleans among the fields is exactly the shape
 // in which "dangerous" ends up next to "unavailable" by accident.
-func entry(
-	id, title, hint, section string, available, danger bool,
+func (m *Model) command(
+	id, title, description, shortcut, category string,
+	available, danger bool,
+	action keybindings.Action,
 ) component.Command {
 	return component.Command{
-		ID:        id,
-		Title:     title,
-		Hint:      hint,
-		Section:   section,
-		Available: available,
-		Danger:    danger,
+		ID:          id,
+		Title:       title,
+		Description: description,
+		Shortcut:    shortcut,
+		Category:    category,
+		Available:   available,
+		Danger:      danger,
+		// The closure is built here and now, capturing the model as it is at this
+		// moment. That is why the table is rebuilt on every change rather than held:
+		// a closure captured once would run against a state the user has left behind.
+		Execute: func() tea.Cmd { return m.run(action) },
 	}
-}
-
-// commandAction maps a palette command identifier to the action that runs it.
-//
-// A map rather than a positional lookup, so that adding a command to the table cannot
-// silently shift the dispatch of every command after it.
-var commandAction = map[string]keybindings.Action{
-	"open":            keybindings.ChatOpen,
-	"search":          keybindings.ActionSearch,
-	"info":            keybindings.ActionInfo,
-	"new_chat":        keybindings.ActionNewChat,
-	"toggle_read":     keybindings.ActionToggleRead,
-	"toggle_unread":   keybindings.ActionToggleRead,
-	"toggle_pin":      keybindings.ActionTogglePin,
-	"toggle_mute":     keybindings.ActionToggleMute,
-	"toggle_archive":  keybindings.ActionToggleArchive,
-	"delete_chat":     keybindings.ActionDeleteChat,
-	"reply":           keybindings.ActionReply,
-	"edit":            keybindings.ActionEdit,
-	"react":           keybindings.ActionReact,
-	"forward":         keybindings.ActionForward,
-	"copy":            keybindings.ActionCopy,
-	"select":          keybindings.ActionSelect,
-	"select_all":      keybindings.ActionSelectAll,
-	"download":        keybindings.ActionDownload,
-	"open_attachment": keybindings.ActionOpen,
-	"delete_message":  keybindings.ActionDelete,
-	"sync":            keybindings.ActionSync,
-	"help":            keybindings.ActionHelp,
-	"cancel":          keybindings.ActionCancel,
-	"quit":            keybindings.ActionQuit,
 }
 
 // --- context predicates ---

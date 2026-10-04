@@ -70,8 +70,16 @@ func Defaults() []Binding {
 			// application must not mean another thing in one of them. mod+p is
 			// the other established spelling for a command palette, so nothing
 			// is lost by choosing it.
+			// mod+p rather than mod+shift+p.
+			//
+			// mod+p is the convention every editor has trained users on, and a
+			// keyboard-driven client whose palette needs a shift is a palette half the
+			// users never find. It was previously the pin toggle; the palette is worth
+			// more than a shortcut to one of twenty commands, and the pin keeps a home
+			// in the palette itself. See chat.toggle_mute for the same trade applied to
+			// a flag whose binding had to move.
 			Action: ActionPalette, Global: true,
-			Keys: []Key{key("mod+shift+p")}, Help: "Abrir la paleta de comandos",
+			Keys: []Key{key("mod+p")}, Help: "Abrir la paleta de comandos",
 			Short: "comandos",
 		},
 		{
@@ -113,8 +121,18 @@ func Defaults() []Binding {
 			Short: "leída",
 		},
 		{
+			// No default key.
+			//
+			// mod+p is the command palette, and a conversation flag does not deserve a
+			// more memorable shortcut than the thing that reaches all twenty other
+			// commands. It stays on this table — so it appears in the cheat sheet, it is
+			// configurable, and it is one of the palette's entries — but it is reached
+			// through mod+p and a two-letter query rather than by muscle memory.
+			//
+			// Every action a user can reach has to be reachable *somehow*, and the palette
+			// is what makes losing a binding acceptable rather than a regression.
 			Action: ActionTogglePin, Panel: PanelSidebar,
-			Keys: []Key{key("mod+p")}, Help: "Anclar o desanclar la conversación",
+			Keys: nil, Help: "Anclar o desanclar la conversación",
 			Short: "anclar",
 		},
 		{

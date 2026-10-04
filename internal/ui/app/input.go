@@ -70,11 +70,21 @@ func (m *Model) onKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.run(a)
 	}
 
-	// 4. The palette, while open, takes printable input as its query. It must come
-	//    after the globals so that ctrl+q still quits and esc still closes it.
+	// 4. The palette, while open, takes the key. It must come after the globals so
+	//    that ctrl+q still quits and esc still closes it.
+	//
+	//    This delegates rather than checking whether the press is printable and
+	//    appending it to the query. That older version handled text and dropped
+	//    everything else, so enter, down and ctrl+j never reached the palette at all:
+	//    the list could not be navigated and no command could be run, and the palette
+	//    could only be closed with escape.
+	//
+	//    The palette's own Update already handles all of it — printable text, backspace,
+	//    enter, up/down and esc — so anything else is a key it does not recognise and
+	//    correctly ignores.
 	if m.palette.IsOpen() {
-		if component.IsPrintable(msg) {
-			return m.palette.Open(m.palette.Query() + msg.Text)
+		if _, cmd := m.palette.Update(msg); cmd != nil {
+			return cmd
 		}
 		return nil
 	}

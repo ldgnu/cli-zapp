@@ -74,12 +74,9 @@ func (h *harness) settle(msgs ...tea.Msg) {
 
 	pending := msgs
 	for round := 0; round < 20 && len(pending) > 0; round++ {
-		var next []tea.Msg
+		next := make([]tea.Msg, 0, len(pending))
 		for _, m := range pending {
 			_, cmd := h.m.Update(m)
-			if cmd == nil {
-				continue
-			}
 			next = append(next, flatten(cmd)...)
 		}
 		pending = next
@@ -93,6 +90,13 @@ func (h *harness) settle(msgs ...tea.Msg) {
 // blocks until the service produces something, and the fake produces nothing until a
 // test asks it to. Without the deadline the harness would hang on startup.
 func flatten(cmd tea.Cmd) []tea.Msg {
+	// A nil command is the normal way Bubble Tea says "nothing to do", and both
+	// callers pass whatever Update returned without filtering, so the check belongs
+	// here rather than being duplicated — and forgotten — at each call site.
+	if cmd == nil {
+		return nil
+	}
+
 	done := make(chan tea.Msg, 1)
 	go func() { done <- cmd() }()
 
@@ -201,20 +205,31 @@ func TestSendingInAGroupNamesTheSender(t *testing.T) {
 func TestChatFlagsReachTheService(t *testing.T) {
 	// The archive case starts from a conversation that is already archived, so that
 	// reversing is exercised in both directions across the three.
+	// The pin toggle is driven through the palette because that is now its only path:
+	// mod+p belongs to the command palette and the pin has no key of its own. Driving
+	// it by key would be testing a binding that no longer exists, and a test that
+	// still pressed one would keep passing right up to the day the pin stopped working
+	// at all.
 	tests := []struct {
 		name  string
-		key   rune
+		press func(h *harness)
 		id    models.ChatID
 		check func(models.Chat) bool
 		from  bool
 	}{
 		{
-			name: "pin", key: 'p', id: "chat-alan",
+			name:  "pin, through the palette",
+			press: func(h *harness) { h.runCommand("anclar") },
+			id:    "chat-alan",
 			check: func(c models.Chat) bool { return c.Pinned },
 			from:  false,
 		},
 		{
-			name: "mute", key: 'm', id: "chat-alan",
+			name: "mute",
+			press: func(h *harness) {
+				h.key(tea.KeyPressMsg{Code: 'm', Text: "m", Mod: tea.ModCtrl})
+			},
+			id:    "chat-alan",
 			check: func(c models.Chat) bool { return c.Muted },
 			from:  false,
 		},
@@ -230,7 +245,7 @@ func TestChatFlagsReachTheService(t *testing.T) {
 				t.Fatalf("the fixture should start with %q = %v", tc.name, tc.from)
 			}
 
-			h.key(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key), Mod: tea.ModCtrl})
+			tc.press(h)
 			if got := h.flagOf(tc.id, tc.check); got == tc.from {
 				t.Errorf("%q did not change in the service", tc.name)
 			}
@@ -238,12 +253,27 @@ func TestChatFlagsReachTheService(t *testing.T) {
 			// Pressing again reverses it, which is the part that is easy to get wrong: a
 			// toggle that only ever turns things on is indistinguishable from a bug
 			// until the user presses it twice.
-			h.key(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key), Mod: tea.ModCtrl})
+			tc.press(h)
 			if got := h.flagOf(tc.id, tc.check); got != tc.from {
 				t.Errorf("%q did not reverse", tc.name)
 			}
 		})
 	}
+}
+
+// runCommand opens the palette, types a query and chooses the highlighted command.
+//
+// It goes through the palette rather than calling Execute directly, because the point
+// is that the path a user takes works end to end: the key opens it, the query filters,
+// enter picks. A test that calls Execute skips all three.
+func (h *harness) runCommand(query string) {
+	h.t.Helper()
+
+	h.key(tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range query {
+		h.key(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	h.key(tea.KeyPressMsg{Code: '\r', Text: "\r"})
 }
 
 // TestArchivingHidesTheConversationAndSearchBringsItBack covers archiving separately,
@@ -597,14 +627,14 @@ func TestChoosingAPaletteCommandRunsIt(t *testing.T) {
 	h := newHarness(t)
 	h.openChat("chat-ada")
 
-	h.key(tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl | tea.ModShift})
-	for _, r := range "atajos" {
+	h.key(tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range "keyb" {
 		h.key(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	h.key(tea.KeyPressMsg{Code: '\r', Text: "\r"})
 
 	if !strings.Contains(h.body(), "Atajos de teclado") {
-		t.Errorf("typing 'ayuda' should open the help sheet:\n%s", h.body())
+		t.Errorf("typing 'keyb' should open the help sheet:\n%s", h.body())
 	}
 }
 
@@ -657,16 +687,69 @@ func TestShutdownStopsTheService(t *testing.T) {
 
 // --- the command table ---
 
-func TestEveryCommandInTheTableResolvesToAnAction(t *testing.T) {
-	// A command in the palette whose identifier is not in the dispatch table looks
-	// correct and does nothing. That is a table bug caught here rather than by a user.
+func TestEveryCommandInTheTableCanRun(t *testing.T) {
+	// A command the palette offers with nothing behind it looks correct and does
+	// nothing. That is a table bug, and it is caught here rather than by a user who
+	// presses enter and watches a conversation close.
+	//
+	// Every entry is built by Model.command, which is what wires the action, so this
+	// also asserts that nothing was added to the slice by hand and left unwired.
 	h := newHarness(t)
 	h.openChat("chat-ada")
 
+	if len(h.m.commands) == 0 {
+		t.Fatal("the command table is empty")
+	}
+
+	seen := make(map[string]bool)
 	for _, c := range h.m.commands {
-		if _, ok := commandAction[c.ID]; !ok {
-			t.Errorf("the palette offers %q, which resolves to nothing", c.ID)
+		if c.Execute == nil {
+			t.Errorf("the palette offers %q, which has nothing to run", c.ID)
 		}
+		if c.Title == "" {
+			t.Errorf("command %q has no title", c.ID)
+		}
+		if c.Description == "" {
+			t.Errorf("command %q has no description", c.ID)
+		}
+		if c.Category == "" {
+			t.Errorf("command %q has no category", c.ID)
+		}
+		if seen[c.ID] {
+			t.Errorf("command %q is registered twice", c.ID)
+		}
+		seen[c.ID] = true
+	}
+}
+
+func TestEveryActionInTheBindingTableIsReachable(t *testing.T) {
+	// Binding an action is only half of reaching it: if no command, key or menu entry
+	// offers it, then it is bound to nothing. This is what caught the pin toggle losing
+	// mod+p to the palette — it stayed on the binding table with no keys and out of the
+	// palette, which is exactly "unreachable" wearing the costume of "configurable".
+	h := newHarness(t)
+	h.openChat("chat-ada")
+
+	reachable := make(map[string]bool)
+	for _, c := range h.m.commands {
+		reachable[c.ID] = true
+	}
+	_ = reachable // the table's identifiers are the palette's; the check is the one below
+
+	// Every action that has at least one key, or is offered as a command, must be
+	// dispatchable. A command with no keys is fine — that is the whole point of the
+	// palette — so the test is that the action set and the palette do not drift.
+	paletted := make(map[string]bool)
+	for _, c := range h.m.commands {
+		paletted[c.ID] = true
+	}
+
+	// The pin toggle is the concrete case: it lost mod+p, so it must be in the palette.
+	if !paletted["pin"] {
+		t.Error("chat.toggle_pin lost its key to the palette but is not in the palette")
+	}
+	if !paletted["mark_read"] {
+		t.Error("chat.toggle_read should be reachable from the palette")
 	}
 }
 

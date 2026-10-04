@@ -54,8 +54,29 @@ func openChat(t *testing.T, m *Model, id models.ChatID) {
 // Discarding is safe because the only commands a test depends on are the fetches whose
 // results it feeds back itself; everything else the model queues is either a no-op or
 // a refresh the fixture already satisfies.
+// send applies a message and settles everything it triggers.
+//
+// It runs the commands Update returns, which is what the real program does and what a
+// bare `m.Update(msg)` does not.
+//
+// The version that dropped them let tests here pass without the thing they claimed to
+// test ever happening: the palette test pressed enter, the palette closed, and both of
+// its assertions were satisfied by the palette's own list — the entry title it was
+// looking for, and a prompt placeholder that the query had replaced. The help sheet it
+// claimed to open never opened.
+//
+// Every path that goes through component.EventCmd rather than mutating the model in
+// place is invisible without this loop, so the loop is not optional.
 func send(m *Model, msg tea.Msg) {
-	_, _ = m.Update(msg)
+	pending := []tea.Msg{msg}
+	for round := 0; round < 20 && len(pending) > 0; round++ {
+		next := make([]tea.Msg, 0, len(pending))
+		for _, msg := range pending {
+			_, cmd := m.Update(msg)
+			next = append(next, flatten(cmd)...)
+		}
+		pending = next
+	}
 }
 
 // frame returns the rendered screen as its lines, with styling stripped.
@@ -303,8 +324,8 @@ func TestEscapeClosesThePalette(t *testing.T) {
 func TestPaletteRunsTheChosenCommand(t *testing.T) {
 	m := newModel(t, 120, 30)
 
-	send(m, ctrlShiftKey('p'))
-	for _, r := range "atajos" {
+	send(m, tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range "keyb" {
 		send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	send(m, tea.KeyPressMsg{Code: '\r', Text: "\r"})
@@ -316,6 +337,103 @@ func TestPaletteRunsTheChosenCommand(t *testing.T) {
 	// The palette must be gone, or it would sit on top of the dialog.
 	if strings.Contains(body, "buscar un comando") {
 		t.Error("the palette should close once a command is chosen")
+	}
+}
+
+// TestThePaletteListCanBeNavigated is the test for a bug the palette's own unit tests
+// could not see.
+//
+// The palette component has always handled down, up and enter. The application did
+// not: it routed only printable presses into it and dropped the rest, so the list
+// could not be moved and no command could be run. Every palette test passed anyway,
+// because they drove the component directly.
+//
+// This drives it the way a person does — through the application's key handling — and
+// checks that the command which ran is the one that was highlighted, not the first.
+func TestThePaletteListCanBeNavigated(t *testing.T) {
+	// "conversaci" matches three commands, all as plain substrings, so they keep the
+	// order the application declared:
+	//
+	//	0  Abrir conversación    → focuses the transcript
+	//	1  Nueva conversación    → reopens the palette, unfiltered
+	//	2  Eliminar conversación → asks for confirmation
+	//
+	// Moving down once and pressing enter must therefore reopen the palette. Enter on
+	// the first would focus the transcript instead, and that difference is what makes
+	// this a test of navigation rather than of the palette opening.
+	m := newModel(t, 120, 30)
+	openChat(t, m, "chat-ada")
+
+	send(m, tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range "conversaci" {
+		send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+
+	// The filter left exactly the three it should, in order.
+	filtered := strings.Join(frame(m), "\n")
+	for _, want := range []string{
+		"Abrir conversación", "Nueva conversación", "Eliminar conversación",
+	} {
+		if !strings.Contains(filtered, want) {
+			t.Fatalf("%q should survive the filter, got:\n%s", want, filtered)
+		}
+	}
+
+	send(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	send(m, tea.KeyPressMsg{Code: '\r', Text: "\r"})
+
+	body := strings.Join(frame(m), "\n")
+	if !strings.Contains(body, "buscar un comando") {
+		t.Errorf("down then enter should have run \"Nueva conversación\", which reopens "+
+			"the palette with an empty query:\n%s", body)
+	}
+	// Unfiltered, which is the only thing that distinguishes "the palette reopened" from
+	// "the palette never closed". "Buscar" is a command the query did not match.
+	if !strings.Contains(body, "Filtra las conversaciones por nombre o mensaje") {
+		t.Errorf("the reopened palette should list every command:\n%s", body)
+	}
+}
+
+// TestEnterRunsWhatIsHighlighted guards the same wiring from the other side: with the
+// cursor left at the top, enter must run the only match.
+//
+// It opens a different conversation from the tests above on purpose. Every frame test
+// passed "chat-ada", which made the parameter a lie the linter was right to flag, and
+// it means nothing here has yet checked that the palette drives a conversation other
+// than the first one in the list.
+func TestEnterRunsWhatIsHighlighted(t *testing.T) {
+	m := newModel(t, 120, 30)
+	openChat(t, m, "chat-grace")
+
+	send(m, tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range "keyb" {
+		send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	send(m, tea.KeyPressMsg{Code: '\r', Text: "\r"})
+
+	body := strings.Join(frame(m), "\n")
+	// "Keybindings" is itself a palette entry, so finding it proves nothing. This line
+	// only exists in the cheat sheet, and it also asserts that mod+p is where the
+	// palette now lives.
+	if !strings.Contains(body, "Abrir la paleta de comandos") {
+		t.Errorf("enter on the only match should open the help sheet:\n%s", body)
+	}
+}
+
+// TestEscapeStillClosesThePaletteWithAQueryInIt keeps step 2 of the input order ahead of
+// the palette's own handler. The palette also handles escape, and it handles it
+// correctly, so this test is about there being one place that decides.
+func TestEscapeStillClosesThePaletteWithAQueryInIt(t *testing.T) {
+	m := newModel(t, 120, 30)
+
+	send(m, tea.KeyPressMsg{Code: 'p', Text: "p", Mod: tea.ModCtrl})
+	for _, r := range "sinc" {
+		send(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	send(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	if body := strings.Join(frame(m), "\n"); strings.Contains(body, "Sincronizar") {
+		t.Errorf("escape should have closed the palette:\n%s", body)
 	}
 }
 

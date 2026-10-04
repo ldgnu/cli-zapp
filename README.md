@@ -54,6 +54,7 @@ and the modifier-free keys stay free for scrolling and text entry.
 
 | Key | Action |
 | --- | --- |
+| `mod+p` | **Command palette** |
 | `mod+q` | Quit, or close the top overlay |
 | `mod+f` | Search |
 | `mod+r` | Reconnect and resynchronise |
@@ -65,7 +66,6 @@ and the modifier-free keys stay free for scrolling and text entry.
 | `mod+e` | Edit the selected message |
 | `mod+d` | Delete the selected message |
 | `mod+u` | Mark the chat read or unread |
-| `mod+p` | Pin the chat |
 | `mod+m` | Mute the chat |
 | `esc` | Cancel, contextual |
 | `enter` | Send (in the composer) |
@@ -75,6 +75,13 @@ and the modifier-free keys stay free for scrolling and text entry.
 | `space` | Select or deselect a message |
 | `r` / `R` | Reply / react |
 | `mod+?` | Help |
+
+`mod+p` is the command palette, and **pinning a chat has no shortcut**. That is
+the trade: a conversation flag does not deserve a more memorable key than the
+thing that reaches all twenty other commands. Pinning is still on the binding
+table — it appears in `mod+?` under a heading with no key beside it, and it is
+configurable — and it is one of the palette's entries. Losing a shortcut is only
+acceptable while every action stays reachable somewhere.
 
 `make keys` prints the full table in TOML form, ready to paste into a
 configuration file.
@@ -168,6 +175,18 @@ That is not theoretical. The test suite has caught, among others:
 - **a conversation that changed under the cursor** — pinning re-sorts the list, and
   the selection was an index, so pinning a conversation silently opened a different
   one. The sidebar now remembers the selection by identifier.
+- **a command palette that could not run a command** — the application routed only
+  printable presses into the palette and dropped everything else, so `enter`, `down`
+  and `ctrl+j` never arrived. The list could not be navigated and nothing could be
+  chosen. The palette's own tests passed the whole time, because they drove the
+  component directly and never went through the routing.
+
+That last one is the general lesson, and it is why `send` in the frame tests now
+runs the commands `Update` returns instead of discarding them: anything reaching the
+model through an event command rather than by mutating it is invisible to a harness
+that drops the `tea.Cmd`. A test asserting "choosing the help command opens the help
+sheet" had been passing while the sheet never opened, because the two strings it
+looked for were both rendered by the palette it had failed to close.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full reasoning.
 

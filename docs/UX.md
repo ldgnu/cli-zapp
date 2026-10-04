@@ -219,17 +219,28 @@ each of them.
 
 ## 6. The command palette
 
-`ctrl+shift+p`. A keyboard-driven client accumulates actions faster than any key table
-can carry them. The bindings cover the frequent; the palette covers everything, and is
-the only discoverable route to the actions that have no binding at all.
+`ctrl+p`. A keyboard-driven client accumulates actions faster than any key table can carry
+them. The bindings cover the frequent; the palette covers everything, and is the only
+discoverable route to the actions that have no binding at all.
+
+### Why `ctrl+p` rather than `ctrl+shift+p`
+
+`ctrl+shift+p` is the VS Code spelling and `ctrl+p` is the neovim one. The shift is the
+part that loses: a palette behind a three-finger chord is a palette half the users never
+find, and there is no competing meaning for the simpler key.
+
+That is not free. `ctrl+p` was **the pin toggle**, and it now has no key at all. It is
+still on the binding table — so it appears in the cheat sheet, under a heading with
+nothing in the key column, and it is configurable — and it is one of the palette's
+entries. Losing a shortcut is only acceptable if every action stays reachable somewhere,
+which is the entire reason the palette is worth building before the flags are given
+keys.
 
 ### Why not `ctrl+k`
 
-`ctrl+k` is the convention every editor has trained users on, and it is also "up" in
-the i3 and vim dialect this interface follows. That convention has priority here: a key
-that means one thing in every other pane of a keyboard-driven application must not mean
-another thing in one of them. `ctrl+shift+p` is the other established spelling, so
-nothing is lost.
+`ctrl+k` is "up" in the i3 and vim dialect this interface follows. That convention has
+priority: a key that means one thing in every other pane of a keyboard-driven application
+must not mean another thing in one of them.
 
 ### Why unavailable commands are greyed rather than hidden
 
@@ -237,11 +248,31 @@ nothing is lost.
 user cannot find and a feature that does not exist look identical from outside, and only
 one of them can be fixed by adding the key they were about to press.
 
-### Why the query is seeded rather than typed blind
+### Why the query is fuzzy, and fuzzy carefully
 
-The palette opens with an empty query and filters as you type. A seeded open — press
-`ctrl+p` then a letter — is one keystroke saved on every use, and costs a second binding
-that is only discoverable once the user knows the palette exists.
+A subsequence match is the weakest guarantee available — `abc` matches "a big cat" — so
+the score is built entirely out of what makes the good cases rank far above the bad ones:
+consecutive runs, matches that start a word, matches at the start, and a penalty for
+every title character the user skipped. Typing `mcl` finds "**M**arcar **c**omo no
+**l**eída" by taking those letters in order across two word boundaries, and it outranks a
+scattered match of the same three letters.
+
+What is deliberately **not** fuzzy is the ranking of the structured cases. Exact, prefix,
+word-boundary and substring are checked before any subsequence and score above every fuzzy
+result, so a query of "mute" ranks a command called exactly "Mute" above "Silenciar
+conversación" — which contains those letters in order across a boundary — and never ranks
+"Unmute" above either.
+
+That is the failure mode a naive fuzzy matcher has, and it is the reason a palette with
+one can be actively dangerous: the wrong item is highlighted, and pressing enter does the
+wrong thing to a conversation.
+
+### Why the description is one row, not one per command
+
+Below the list, showing only the highlighted entry, à la VS Code. A description beside
+every entry would double the list's height and turn a scannable menu into a wall, while a
+description for the highlighted entry only is exactly the thing the user cannot read
+without moving the cursor.
 
 ### Why the ordering is not alphabetical
 
@@ -304,7 +335,8 @@ One path, and the order is load-bearing:
    deleted a different one.
 2. **Escape** is handled next, because the user must always be able to abandon a mode.
 3. **Global bindings** resolve before any text field.
-4. **The palette** takes printable input as its query, while it is open.
+4. **The palette** takes the key, while it is open. All of it, delegating to the palette:
+   text, backspace, enter, up, down. See below.
 5. **The focused region** gets the remainder.
 
 Step 3 before step 4 is the counter-intuitive one, and the reason is worth stating
@@ -312,6 +344,20 @@ because getting it backwards produces a bug that reads as "my shortcuts are brok
 text field accepts arbitrary input and reports that it consumed the press, so if it saw
 the key first it would swallow `ctrl+q`, `ctrl+r` and `ctrl+p` — and the user spends most
 of their time with the composer focused.
+
+Step 4 used to test `IsPrintable` and append to the query, dropping everything else. That
+is a one-line version of the palette's own input handling, and it silently disagreed with
+it about what a palette is for: enter, up and `ctrl+j` never arrived, so the list could
+not be navigated and **no command could be run at all**. The palette's component tests
+passed throughout, because they drove the component directly and never went through this
+step.
+
+That is worth writing down as a rule rather than as an anecdote: *the unit test of a
+component and the wiring that reaches it are different claims, and only the second one is
+about the product.* Anything that reaches the model through an event command rather than
+by mutating it is invisible to a test harness that discards the `tea.Cmd` that `Update`
+returns — which is what the frame tests used to do, which is how a test asserting "the
+help sheet opens" passed while the help sheet never opened.
 
 `Escape` binds to `app.cancel` as well as being special-cased, so a user who rebinds it
 gets the rebinding.

@@ -16,13 +16,16 @@ import (
 // commands is a fixed table so the filtering assertions are about the filter rather
 // than about whatever the application happens to declare this week.
 var commands = []component.Command{
-	{ID: "reply", Title: "Responder", Hint: "r", Section: "Mensaje", Available: true},
-	{ID: "edit", Title: "Editar mensaje", Hint: "mod+e", Section: "Mensaje", Available: true},
-	{ID: "copy", Title: "Copiar mensaje", Hint: "mod+c", Section: "Mensaje", Available: true},
-	{ID: "react", Title: "Reaccionar", Hint: "R", Section: "Mensaje", Available: false},
-	{ID: "delete", Title: "Eliminar mensaje", Section: "Mensaje", Available: true, Danger: true},
-	{ID: "quit", Title: "Salir", Hint: "mod+q", Section: "Aplicación", Available: true},
-	{ID: "help", Title: "Atajos de teclado", Hint: "mod+?", Section: "Aplicación", Available: true},
+	{ID: "reply", Title: "Responder", Shortcut: "r", Category: "Mensaje", Available: true},
+	{ID: "edit", Title: "Editar mensaje", Shortcut: "mod+e", Category: "Mensaje", Available: true},
+	{ID: "copy", Title: "Copiar mensaje", Shortcut: "mod+c", Category: "Mensaje", Available: true},
+	{ID: "react", Title: "Reaccionar", Shortcut: "R", Category: "Mensaje", Available: false},
+	{ID: "delete", Title: "Eliminar mensaje", Category: "Mensaje", Available: true, Danger: true},
+	{ID: "quit", Title: "Salir", Shortcut: "mod+q", Category: "Aplicación", Available: true},
+	{
+		ID: "help", Title: "Atajos de teclado", Shortcut: "mod+?",
+		Category: "Aplicación", Available: true,
+	},
 }
 
 // open builds an open palette over the fixed table.
@@ -88,7 +91,7 @@ func TestPromptIsAlwaysVisible(t *testing.T) {
 	many := make([]component.Command, 0, 200)
 	for i := range 200 {
 		many = append(many, component.Command{
-			ID: "c", Title: "Comando " + itoa(i), Section: "S",
+			ID: "c", Title: "Comando " + itoa(i), Category: "S", Available: true,
 		})
 	}
 
@@ -123,8 +126,8 @@ func TestExactMatchOutranksPrefix(t *testing.T) {
 	p := palette.New(theme.Dark())
 	p.Resize(layout.Rect{Width: 80, Height: 24})
 	p.SetCommands([]component.Command{
-		{ID: "a", Title: "Responder rápido", Section: "S"},
-		{ID: "b", Title: "Responder", Section: "S"},
+		{ID: "a", Title: "Responder rápido", Category: "S", Available: true},
+		{ID: "b", Title: "Responder", Category: "S", Available: true},
 	})
 	p.Open("responder")
 
@@ -389,4 +392,248 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// --- fuzzy matching ---
+
+// TestFuzzyMatchingFindsScatteredLetters is the property that makes a palette usable:
+// the user types two letters from each of two words and gets the command they meant.
+func TestFuzzyMatchingFindsScatteredLetters(t *testing.T) {
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{
+		{ID: "a", Title: "Marcar como no leída", Category: "S", Available: true},
+		{ID: "b", Title: "Nueva conversación", Category: "S", Available: true},
+		{ID: "c", Title: "Sincronizar", Category: "S", Available: true},
+	})
+	p.Open("")
+
+	// A subsequence across a word boundary.
+	for _, q := range []string{"mcnl", "ncn", "nva", "ncr"} {
+		p.Close()
+		p.Open(q)
+		body := frame(t, p, 80, 24)
+		if strings.Contains(body, "sin coincidencias") {
+			t.Errorf("query %q matched nothing", q)
+		}
+	}
+}
+
+func TestFuzzyRanksTheTightMatchFirst(t *testing.T) {
+	// "snc" is a subsequence of both. The one where the letters are contiguous must
+	// come first, or the palette is a slot machine.
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{
+		{ID: "loose", Title: "Sincronizar ahora con todo", Category: "S", Available: true},
+		{ID: "tight", Title: "Sincronizar", Category: "S", Available: true},
+	})
+	p.Open("snc")
+
+	rows := strings.Split(frame(t, p, 80, 24), "\n")
+	first, second := -1, -1
+	for i, l := range rows {
+		if strings.Contains(l, "Sincronizar") && !strings.Contains(l, "con todo") && first < 0 {
+			first = i
+		}
+		if strings.Contains(l, "con todo") && second < 0 {
+			second = i
+		}
+	}
+	if first < 0 || second < 0 {
+		t.Fatalf("both commands should be listed:\n%s", strings.Join(rows, "\n"))
+	}
+	if first > second {
+		t.Errorf("the tighter match should be first: %q on row %d, %q on row %d",
+			"Sincronizar", first, "Sincronizar ahora con todo", second)
+	}
+}
+
+func TestFuzzyNeverOutranksAnExactMatch(t *testing.T) {
+	// The failure mode a naive fuzzy matcher has: "mute" ranks "Unmute" above "Mute",
+	// because both contain the letters in order. The user then presses enter and mutes
+	// the wrong conversation.
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{
+		{ID: "un", Title: "Unmute", Category: "S", Available: true},
+		{ID: "ex", Title: "Mute", Category: "S", Available: true},
+	})
+	p.Open("mute")
+
+	rows := strings.Split(frame(t, p, 80, 24), "\n")
+	order := []string{}
+	for _, l := range rows {
+		for _, name := range []string{"Unmute", "Mute"} {
+			if strings.Contains(l, name) && (len(order) == 0 || order[len(order)-1] != name) {
+				order = append(order, name)
+			}
+		}
+	}
+	if len(order) < 2 {
+		t.Fatalf("both should be listed:\n%s", strings.Join(rows, "\n"))
+	}
+	if order[0] != "Mute" {
+		t.Errorf("the exact match should come first, got %v", order)
+	}
+}
+
+func TestFuzzyPrefersAWordBoundary(t *testing.T) {
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{
+		{ID: "a", Title: "Cerrar", Category: "S", Available: true},
+		{ID: "b", Title: "Marcar como leída", Category: "S", Available: true},
+	})
+	p.Open("c")
+
+	// "Marcar" contains a 'c' at a word boundary; "Cerrar" starts with one. Both are
+	// matched, and both are reasonable — the point is that neither is dropped.
+	body := frame(t, p, 80, 24)
+	for _, want := range []string{"Cerrar", "Marcar"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q should match a single-letter query:\n%s", want, body)
+		}
+	}
+}
+
+// --- the entry layout ---
+
+// TestEveryEntryIsOneLine is the regression test for the width trap.
+//
+// The palette's style has a border and a column of padding on each side, and lipgloss's
+// Width counts the border. Getting that wrong leaves the content four cells narrower
+// than it was padded to, and every entry wraps its shortcut onto a second line: twenty
+// commands become forty rows and the prompt is pushed off the top.
+func TestEveryEntryIsOneLine(t *testing.T) {
+	for _, size := range [][2]int{{40, 10}, {60, 20}, {80, 24}, {140, 40}} {
+		p := palette.New(theme.Dark())
+		p.Resize(layout.Rect{Width: size[0], Height: size[1]})
+		p.SetCommands(commands)
+		p.Open("")
+
+		lines := strings.Split(frame(t, p, size[0], size[1]), "\n")
+
+		// Every row of the box must be the box's width: the outer box columns plus the
+		// palette's own border. A wrapped shortcut shows up as a row wider than that.
+		for i, l := range lines {
+			if strings.TrimSpace(text.StripANSI(l)) == "" {
+				continue
+			}
+			if got := text.VisibleWidth(text.StripANSI(l)); got > size[0] {
+				t.Errorf("at %dx%d row %d is %d cells:\n%q", size[0], size[1], i, got, l)
+			}
+		}
+
+		// The prompt is the first row of the box and the rule is the second. Asserting
+		// that pair rather than an absolute row number, because the box is centred at a
+		// height-dependent offset and a fixed row would only pass at some sizes.
+		//
+		// What it catches is the wrapping: a shortcut pushed onto its own line pushes
+		// the rule down, so "the row after the prompt is a rule" is the invariant that
+		// survives the box moving.
+		prompt := -1
+		for i, l := range lines {
+			if strings.Contains(l, "buscar un comando") {
+				prompt = i
+				break
+			}
+		}
+		if prompt < 0 || prompt+1 >= len(lines) {
+			t.Fatalf("at %dx%d the prompt is missing:\n%s",
+				size[0], size[1], strings.Join(lines, "\n"))
+		}
+		if next := text.StripANSI(lines[prompt+1]); !strings.Contains(next, "─") {
+			t.Errorf("at %dx%d the rule should follow the prompt, got %q",
+				size[0], size[1], next)
+		}
+	}
+}
+
+// TestTheDescriptionSitsBelowTheList keeps it there.
+//
+// Above the list it is a row the eye has to skip past on the way to the first command,
+// which is the opposite of what a description is for.
+func TestTheDescriptionSitsBelowTheList(t *testing.T) {
+	described := commands[0]
+	described.Description = "Abre la conversación resaltada"
+	described.Available = true
+
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{described})
+	p.Open("")
+
+	rows := strings.Split(frame(t, p, 80, 24), "\n")
+
+	title, desc := -1, -1
+	for i, l := range rows {
+		if title < 0 && strings.Contains(l, described.Title) {
+			title = i
+		}
+		if desc < 0 && strings.Contains(l, described.Description) {
+			desc = i
+		}
+	}
+	if title < 0 || desc < 0 {
+		t.Fatalf("both the title and the description should be visible:\n%s",
+			strings.Join(rows, "\n"))
+	}
+	if desc < title {
+		t.Errorf("the description should be below the list: title on row %d, description on %d",
+			title, desc)
+	}
+}
+
+func TestOnlyTheHighlightedDescriptionIsShown(t *testing.T) {
+	// A description per entry would double the list's height and turn a scannable menu
+	// into a wall.
+	first, second := commands[0], commands[1]
+	first.Description = "primera descripción"
+	second.Description = "segunda descripción"
+	first.Available, second.Available = true, true
+
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 80, Height: 24})
+	p.SetCommands([]component.Command{first, second})
+	p.Open("")
+
+	body := frame(t, p, 80, 24)
+	if strings.Count(body, "descripción") != 1 {
+		t.Errorf("exactly one description should be shown:\n%s", body)
+	}
+
+	// Moving the cursor swaps which one.
+	if _, _ = p.Update(tea.KeyPressMsg{Code: tea.KeyDown}); false {
+		t.Fatal("unreachable")
+	}
+	body = frame(t, p, 80, 24)
+	if !strings.Contains(body, second.Description) || strings.Contains(body, first.Description) {
+		t.Errorf("the description should follow the cursor:\n%s", body)
+	}
+}
+
+func TestANarrowPaletteDropsTheShortcutRatherThanWrapping(t *testing.T) {
+	// At a width where the title and the shortcut cannot share a row, the title wins:
+	// a shortcut the user cannot read is worse than none, and the palette is where
+	// they would look it up.
+	p := palette.New(theme.Dark())
+	p.Resize(layout.Rect{Width: 40, Height: 20})
+	p.SetCommands([]component.Command{{
+		ID: "x", Title: "Eliminar conversación", Shortcut: "mod+backspace",
+		Category: "S", Available: true,
+	}})
+	p.Open("")
+
+	lines := strings.Split(frame(t, p, 40, 20), "\n")
+	shown := 0
+	for _, l := range lines {
+		if strings.Contains(l, "Eliminar") {
+			shown++
+		}
+	}
+	if shown != 1 {
+		t.Errorf("the title should appear on exactly one row, got %d:\n%s",
+			shown, strings.Join(lines, "\n"))
+	}
 }

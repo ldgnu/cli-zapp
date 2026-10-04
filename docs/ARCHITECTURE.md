@@ -140,7 +140,7 @@ key press
   ├─▶ 1. overlay open?  ──▶ the overlay consumes it
   ├─▶ 2. escape?         ──▶ contextual cancel
   ├─▶ 3. global binding? ──▶ quit, search, sync, palette, panel focus
-  ├─▶ 4. palette open?   ──▶ printable input is the query
+  ├─▶ 4. palette open?   ──▶ the palette handles it: text, backspace, enter, up, down
   └─▶ 5. focused region  ──▶ everything else
 ```
 
@@ -149,6 +149,14 @@ key to the focused text field first — makes every `ctrl` shortcut silently
 dead, because a text field accepts arbitrary input and reports that it consumed
 the press. The user would find that `ctrl+q` quits from the sidebar but not from
 the composer, which is where they spend most of their time.
+
+**Step 4 delegates rather than filtering.** An earlier version checked whether
+the press was printable, appended it to the query, and dropped everything else —
+which meant `enter`, `down` and `ctrl+j` never reached the palette, so its list
+could not be moved and no command could be run. The component's tests passed
+throughout, because they drove the component directly. The rule this establishes:
+a region's own `Update` is the single authority on its keys, and the application
+routes rather than reinterprets.
 
 **Step 2 comes before step 3** because the user must always be able to abandon a
 mode they are stuck in. An escape that is itself bound to something is a trap.
@@ -212,6 +220,35 @@ Consequences:
   full-screen frames; merging is one rule: a non-blank cell in the layer wins.
   A centred dialog therefore covers the conversation without repainting the
   status bar it overlaps.
+
+## Commands, and who runs them
+
+`component.Command` is a value with `ID`, `Title`, `Description`, `Shortcut`,
+`Category`, `Available`, `Danger` and an `Execute func() tea.Cmd`.
+
+The split that matters is **who calls `Execute`**. The palette filters a list of
+commands and emits the chosen one as an event; the application runs it. The
+command carries the behaviour, and the palette does not know what any of it
+means.
+
+The tempting alternative — the palette calling `Execute` itself — would need the
+application's state passed in, which makes the palette a second copy of the
+application rather than a component. Keeping the call on the application's side
+is also what makes adding a command a one-place change: `Model.command` wires the
+action, so there is no parallel dispatch table to update and no way for the two to
+disagree about what a command does.
+
+`Available` is a `bool` rather than a `func() bool` for a related reason. A
+closure in a value the palette holds would capture the state at the moment the
+table was built and then go stale — "Responder" would stay greyed after the user
+selected a message. The table is rebuilt whenever the state it depends on changes,
+which is one line at one place and has nothing to capture. `Execute` is safe for
+the same reason: it is a fresh closure each time, not a stored one.
+
+A command with a nil `Execute` is declared but not implemented, and the
+application reports it in a toast rather than ignoring it. A palette entry that
+looks right and does nothing is the failure mode this design exists to make
+visible, and the table's tests assert that no entry is in that state.
 
 ## Terminal text handling
 
