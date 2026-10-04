@@ -12,6 +12,10 @@ keeps its state in a local SQLite database.
 > application currently runs against an in-memory fake. See
 > [Roadmap](#roadmap) and [Limitations](docs/LIMITATIONS.md).
 
+The interface decisions and their reasoning are in
+[docs/UX.md](docs/UX.md); the layering is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ---
 
 ## Running it
@@ -20,6 +24,7 @@ keeps its state in a local SQLite database.
 make build      # → bin/wterm
 make run        # build and start with demo data
 make keys       # print the default keybindings as TOML
+make frame      # print one frame of the interface, at any size
 ```
 
 ```
@@ -34,9 +39,11 @@ wterm [flags]
   --help-keys      print the default keybindings and exit
 ```
 
-The binary is built with `CGO_ENABLED=0`. SQLite is provided by
-[modernc.org/sqlite](https://modernc.org/sqlite), a pure-Go implementation, so
-the result is statically linked and needs no libc to match.
+The binary is built with `CGO_ENABLED=0` and is statically linked — `file bin/wterm`
+says so, and CI asserts it. When the local database arrives it will be provided by
+[modernc.org/sqlite](https://modernc.org/sqlite), a pure-Go implementation, precisely
+so that this stays true: a chat client that needs a matching libc is a chat client
+somebody cannot run.
 
 ---
 
@@ -104,6 +111,10 @@ work everywhere except where typing happens.
 ## Architecture
 
 ```
+scripts/
+  framedump/     prints one frame, exactly as the renderer sends it
+  ptycheck.py    drives the binary through a real pty
+
 internal/
   models/        domain types; imports nothing from wterm
   keybindings/   actions, key specs, binding table — no Bubble Tea
@@ -112,13 +123,21 @@ internal/
   storage/       SQLite (Phase 2)
   sync/          reconciliation engine (Phase 3)
   ui/
+    layout/      geometry as a pure function of (width, height)
+    component/   the Region contract and the shared event vocabulary
     theme/       palettes, metrics, glyph sets
-    components/  chatlist, messagelist, composer, statusbar, overlay
-    app/         root Bubble Tea model
+    components/  sidebar, transcript, composer, statusbar, palette, overlay
+    app/         root model: composition, routing, dispatch
   notifications/ bell, notify-send, unread counter
   config/        TOML configuration (Phase 2)
   logging/       structured logging to a file, never to the terminal
 ```
+
+Every part of the interface implements `component.Region` — its own model, its own
+`Update`, its own `View`. A region emits events and the root decides what they mean,
+so the transcript cannot mark a chat read and the sidebar cannot scroll the
+transcript. See [docs/UX.md](docs/UX.md) for the interface decisions and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layering.
 
 The dependency rule is one-directional:
 
@@ -134,11 +153,21 @@ models ──▶ (nothing)
 enforced by construction: `internal/ui` does not import `whatsmeow`, and the
 whole interface builds and tests against the fake.
 
-That is not theoretical. During Phase 1 the test suite caught a bug where **every
-`ctrl` shortcut was dead**: Bubble Tea's `KeyPressMsg.String()` returns `"j"` for
-ctrl+j, dropping the modifier, so parsing that string produced an unbound key.
-`internal/ui/app/keys.go` now reads the modifier field directly, and the comment
-there records why.
+That is not theoretical. The test suite has caught, among others:
+
+- **every `ctrl` shortcut dead** — Bubble Tea's `KeyPressMsg.String()` returns `"j"`
+  for ctrl+j, dropping the modifier, so parsing that string produced an unbound key.
+  `internal/ui/component/keys.go` reads the modifier field instead.
+- **a conflict detector that could not report anything** — `Conflicts` compared every
+  claim against only the first, so a key claimed twice in one panel and once in
+  another looked unambiguous. `ctrl+e` was bound to both "edit message" and
+  "scroll down" while the startup check reported nothing.
+- **editing that never worked** — the compose-mode fields were cleared before the
+  command that read them was built, so an edit was sent against an empty message
+  identifier and refused by the service.
+- **a conversation that changed under the cursor** — pinning re-sorts the list, and
+  the selection was an index, so pinning a conversation silently opened a different
+  one. The sidebar now remembers the selection by identifier.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full reasoning.
 
@@ -160,61 +189,83 @@ of an account ban. Those are documented rather than glossed over.
 ## Development
 
 ```sh
-make check      # fmt-check, vet, test -race, lint — what CI runs
+make check      # fmt-check, vet, test -race, lint, pty smoke test
 make test       # unit tests with the race detector
 make test-cover # coverage per package
 make lint       # golangci-lint
+make frame COLS=100 ROWS=28 KEYS="tab enter hola"   # print one frame
+make pty        # drive the binary through a real pty at six sizes
 make tools      # install the linter
 ```
 
-Current coverage:
+`make frame` prints exactly what the renderer would send, at any size, with any keys
+pressed first. It is how the layout is reviewed:
+
+```
+$ make frame COLS=100 ROWS=28 KEYS="ctrl+enter enter hola"
+```
+
+`make pty` starts the real binary on a real tty, sends keys and requires a clean
+exit. That is not redundant with the frame: a Bubble Tea application negotiates
+capabilities with the terminal and blocks on answers it never receives when there is
+no tty on stdin, so some checking has to happen against a real one.
+
+Current coverage: **72% of statements, 325 test functions**, run under `-race`. The
+highest-covered packages are the ones where a mistake is visible:
 
 | Package | Coverage |
 | --- | --- |
-| `ui/components/statusbar` | 100% |
-| `ui/components/chatlist` | 94% |
-| `ui/theme` | 94% |
-| `notifications` | 93% |
-| `keybindings` | 88% |
-| `ui/components/overlay` | 86% |
-| `whatsapp` (the fake) | 84% |
-| `ui/components/messagelist` | 84% |
-| `logging` | 86% |
-| `text` | 69% |
-| `ui/app` | 61% |
-| `models` | 60% |
-
-255 test functions, run under `-race`.
+| `ui/components/statusbar` | 99% |
+| `ui/theme` | 92% |
+| `ui/layout` | 92% |
+| `logging` | 92% |
+| `ui/components/overlay` | 89% |
+| `ui/component` | 88% |
+| `ui/app` (the root model) | 82% |
+| `ui/components/sidebar` | 84% |
+| `ui/components/composer` | 83% |
+| `ui/components/transcript` | 72% |
+| `text` | 79% |
+| `models` | 51% |
 
 ### Testing the interface without a terminal
 
-`View()` is a pure function of state, so the whole UI is testable without a
+`View()` touches nothing and returns a string, so the whole UI is testable without a
 terminal:
 
 ```go
-m := app.New(fake.Services(), theme.Dark(), keybindings.DefaultMap())
-m = resize(t, m, 100, 30)          // drive the model's own resize handler
-got := text.StripANSI(m.View().Content)
+m := New(fake.Services(), theme.Dark(), keybindings.DefaultMap())
+m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+got := m.View().Content
 ```
 
-That is how the layout invariants are enforced — no line exceeds the terminal
-width, the output is exactly as many lines as the terminal has rows, and it holds
-at every size from 40×10 to 200×60:
+That is how the layout invariants are enforced — no line exceeds the terminal width,
+the output is exactly as many lines as the terminal has rows, and it holds at every
+size from 40×10 to 200×60:
 
 ```go
-func TestViewRespectsTerminalWidth(t *testing.T) {
-	m, _ := newTestModel(t, 100, 30)
-	for i, line := range strings.Split(render(m), "\n") {
-		if width := text.VisibleWidth(line); width > 100 {
-			t.Errorf("line %d is %d cells", i, width)
+func TestFrameFillsTheTerminalAcrossTheWholeSizeRange(t *testing.T) {
+	for w := 40; w <= 200; w += 7 {
+		for h := 10; h <= 50; h += 3 {
+			m := newModel(t, w, h)
+			for i, line := range frame(m) {
+				if got := text.VisibleWidth(line); got != w {
+					t.Fatalf("at %dx%d row %d is %d cells", w, h, i, got)
+				}
+			}
 		}
 	}
 }
 ```
 
+The service paths need more than that: a command is a function Bubble Tea schedules
+and a test does not, so a test that skips the loop never reaches a send. The harness
+in `actions_test.go` runs the commands `Update` returns and folds the results back
+in, which is what caught editing being broken.
+
 The built binary is additionally smoke-tested on a real pty, since a TUI needs a
-terminal to start at all. That test drives the real navigation paths — focus
-switching, typing, sending — and asserts it exits cleanly on `ctrl+q`.
+terminal to start at all. `make pty` drives the real navigation paths at six sizes
+and asserts it exits cleanly on `ctrl+q`.
 
 ### Linting
 
@@ -242,13 +293,18 @@ gets switched off within a week, after which it catches nothing.
 | Phase | Contents | Status |
 | --- | --- | --- |
 | 0 | Foundations: tooling, lint, CI, `models`, `keybindings`, `text` | done |
-| 1 | `theme`, components, root model, demo data | done |
+| 1 | `theme`, `layout`, regions, root model, command palette, demo data | done |
 | 2 | `storage/sqlite`: schema, migrations, repositories | next |
 | 3 | `whatsapp/adapter`: pairing, sync engine, send/receive | |
 | 4 | Full loop against a real account | |
-| 5 | Reactions, edit, delete, reply, forward, menus | |
-| 6 | Groups, search, pin/mute/archive, contact info | |
-| 7 | Media, keyring, notifications, voice notes | |
+| 5 | Persistence wired into the UI: offline history, search index | |
+| 6 | Media, keyring, voice notes | |
+
+The whole of Phase 1's scope is built and tested, including the features the original
+plan deferred to Phases 5 and 6 — reactions, edit, delete, reply, groups, search,
+pin/mute/archive and the context menus. They were built against the in-memory fake,
+which is what they were designed to be testable against, so landing the adapter is a
+matter of filling in one package rather than writing the interface twice.
 
 ---
 

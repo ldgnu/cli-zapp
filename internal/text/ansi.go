@@ -227,6 +227,51 @@ func HasEscape(s string) bool {
 // [VisibleWidth]: every "\x1b[38;2;17;27;33m" occupies zero visible cells, not the
 // nineteen bytes it is made of. Sequences entirely past the cut are dropped, so
 // the result carries no dangling styling.
+// Clip narrows s to width cells, dropping whatever falls past the edge.
+//
+// It differs from [TruncateStyled] in the one way that matters: it adds no ellipsis.
+// Clipping is for a line that is being made narrower — a cursor marker taking a
+// column, say — where nothing is lost and an ellipsis would claim otherwise. An
+// ellipsis is a promise to the reader that content was cut, and making that promise
+// for a row of padding spaces turns every cursor row into a line that looks truncated.
+func Clip(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if VisibleWidth(s) <= width {
+		return s
+	}
+
+	var (
+		b   strings.Builder
+		vis int
+	)
+	b.Grow(len(s))
+
+	for _, seg := range scanAll(s) {
+		if seg.escape {
+			b.WriteString(seg.text)
+			continue
+		}
+		// Grapheme clusters rather than runes, so an emoji with a skin-tone modifier
+		// or a combining accent is never cut in half — which would leave the terminal
+		// drawing a replacement character on a line that only lost padding.
+		iter(seg.text, func(cluster string) bool {
+			cw := clusterWidth(cluster)
+			if vis+cw > width {
+				return false
+			}
+			vis += cw
+			b.WriteString(cluster)
+			return true
+		})
+		if vis >= width {
+			return b.String()
+		}
+	}
+	return b.String()
+}
+
 func TruncateStyled(s string, width int) string {
 	if width <= 0 {
 		return ""

@@ -337,6 +337,31 @@ type Glyphs struct {
 	Warn        string
 	Error       string
 	OK          string
+
+	// Command is the prefix of the palette's query line, so a command reads as a
+	// command rather than as a search result.
+	Command string
+	// Marker is the selection cursor in a list.
+	//
+	// It is deliberately not the same glyph as the palette's own prompt or the
+	// sidebar's chevron: two different things on screen at once that look identical
+	// is a question the interface should never ask.
+	Marker string
+	// KeyHint brackets a key in the hint bar.
+	KeyHintOpen  string
+	KeyHintClose string
+	// Ellipsis marks truncated text.
+	Ellipsis string
+	// VBar is the vertical rule between the sidebar and the conversation.
+	//
+	// It is not the same character as Divider, which is horizontal: drawing a
+	// horizontal rule in the divider column produced a frame that read as a table
+	// header rather than as two panes.
+	VBar string
+	// Prompt is the composer marker.
+	Prompt string
+	// Pencil marks an edit in progress.
+	Pencil string
 }
 
 // UnicodeGlyphs is the default glyph set.
@@ -352,6 +377,8 @@ func UnicodeGlyphs() Glyphs {
 		Chevron: "›", Back: "‹",
 		Search: "⌕", Close: "✕",
 		Warn: "⚠", Error: "✖", OK: "✔",
+		Command: "›", Marker: "▸", KeyHintOpen: "[", KeyHintClose: "]", Ellipsis: "…", VBar: "│",
+		Prompt: "›", Pencil: "✎",
 	}
 }
 
@@ -366,6 +393,8 @@ func ASCIIGlyphs() Glyphs {
 		Chevron: ">", Back: "<",
 		Search: "/", Close: "x",
 		Warn: "!", Error: "x", OK: "v",
+		Command: ">", Marker: "*", KeyHintOpen: "[", KeyHintClose: "]", Ellipsis: "~", VBar: "|",
+		Prompt: ">", Pencil: "*",
 	}
 }
 
@@ -376,11 +405,17 @@ func ASCIIGlyphs() Glyphs {
 // allocations and make the palette-to-style relationship impossible to test in
 // isolation.
 type Theme struct {
+	// Name identifies the palette, not the application.
 	Name    Name
 	Palette Palette
 	Metrics Metrics
 	Glyphs  Glyphs
 	Styles  Styles
+
+	// Brand is the wordmark drawn in the sidebar's banner. It is part of the
+	// theme rather than a constant in the sidebar because a terminal client with
+	// no identity of its own looks like a demo.
+	Brand string
 }
 
 // New builds a Theme from its parts and derives the styles.
@@ -393,7 +428,7 @@ func New(p Palette, m Metrics, g Glyphs) Theme {
 	if !m.Validate() {
 		m = DefaultMetrics()
 	}
-	t := Theme{Name: NameDark, Palette: p, Metrics: m, Glyphs: g}
+	t := Theme{Name: NameDark, Palette: p, Metrics: m, Glyphs: g, Brand: "WTERM"}
 	t.Styles = buildStyles(t)
 	return t
 }

@@ -69,6 +69,18 @@ linters:
       # "behaviour"). Mixed spelling within one codebase is worse than either
       # convention, so the linter is pointed at the one actually in use.
       locale: UK
+      # Words the interface itself uses.
+      #
+      # The palette, the status bar and the help strings are Spanish, so "comando" is a
+      # product string rather than a typo. A dictionary that wants "commando" would have
+      # the linter and the product disagreeing about the same word, and the fix would be
+      # either a user-visible string or an ignore list. The ignore list is the honest
+      # one. "dialogs" is here for the UK locale, which maps it to "dialogues".
+      ignore-rules:
+        - comando
+        - comandos
+        - dialogs
+        - diálogo
 
     prealloc:
       simple: true

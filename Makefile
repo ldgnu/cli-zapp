@@ -33,7 +33,7 @@ fmt: ## Format all Go source.
 ## fmt-check: fail if anything is unformatted
 .PHONY: fmt-check
 fmt-check: ## Fail if any file is unformatted.
-	@unformatted=$$(gofmt -l ./cmd ./internal); \
+	@unformatted=$$(gofmt -l ./cmd ./internal ./scripts); \
 	if [ -n "$$unformatted" ]; then \
 		echo "not gofmt'd:"; echo "$$unformatted"; exit 1; \
 	fi
@@ -45,8 +45,8 @@ vet: ## Run go vet.
 
 ## test: run unit tests with the race detector
 .PHONY: test
-test: ## Run unit tests with the race detector.
-	CGO_ENABLED=1 $(GO) test -race $(PKG)
+test: ## Run unit tests with the race detector, writing coverage.out.
+	CGO_ENABLED=1 $(GO) test -race -coverprofile=coverage.out $(PKG)
 
 ## test-plain: run unit tests without the race detector
 .PHONY: test-plain
@@ -110,9 +110,22 @@ tidy: ## Tidy go.mod and go.sum.
 vendor: ## Vendor dependencies.
 	$(GO) mod vendor
 
+## frame: print the interface at a given size, exactly as the renderer sends it
+.PHONY: frame
+frame: build ## Print one frame. Usage: make frame COLS=100 ROWS=28 [KEYS="tab enter hola"]
+	$(GO) run ./scripts/framedump $(or $(COLS),100) $(or $(ROWS),28) $(KEYS)
+
+## pty: drive the binary through a real pty and check it starts, reacts and exits
+.PHONY: pty
+pty: build ## Run the pty smoke test at several sizes.
+	@set -e; for size in 80x24 120x30 160x40 60x20 45x12 30x8; do \
+		./scripts/ptycheck.py $${size%x*} $${size#*x} tab ctrl+enter; \
+	done
+	@echo "pty check passed at every size"
+
 ## check: everything CI runs
 .PHONY: check
-check: fmt-check vet test lint ## Run every check CI runs.
+check: fmt-check vet test lint pty ## Run every check CI runs.
 
 ## clean: remove build artefacts
 .PHONY: clean

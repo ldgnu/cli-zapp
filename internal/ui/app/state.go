@@ -1,324 +1,273 @@
 package app
 
 import (
-	"context"
-	"sort"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
 	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/ui/components/chatlist"
+	"github.com/wterm/wterm/internal/text"
+	"github.com/wterm/wterm/internal/ui/component"
+	"github.com/wterm/wterm/internal/ui/components/composer"
 )
 
-// visibleChats returns the chats passing the current search filter.
+// --- the open conversation ---
+
+// currentChat returns the conversation the sidebar's cursor is on.
+func (m *Model) currentChat() (models.Chat, bool) {
+	chat, ok := m.sidebar.SelectedChat()
+	if !ok {
+		return models.Chat{}, false
+	}
+	return chat, true
+}
+
+// currentChatID returns the open conversation's identifier, empty when none is open.
+func (m *Model) currentChatID() models.ChatID {
+	chat, ok := m.currentChat()
+	if !ok {
+		return ""
+	}
+	return chat.ID
+}
+
+// currentChatName returns the open conversation's display name.
+func (m *Model) currentChatName() string {
+	if chat, ok := m.currentChat(); ok {
+		return chat.FallbackName()
+	}
+	return ""
+}
+
+// chatByID looks up a conversation in the cached list.
+func (m *Model) chatByID(id models.ChatID) (models.Chat, bool) {
+	for _, c := range m.chats {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return models.Chat{}, false
+}
+
+// --- derived sidebar state ---
+
+// visibleChats returns the conversations passing the current filter.
 //
-// Archived chats are excluded unless the query mentions them, which keeps the
-// sidebar usable once a list accumulates dozens of archived conversations.
+// Sorting happens here rather than in the sidebar so that the order is a property of
+// the application's data, not of one renderer. A different sidebar would then sort the
+// same way without being asked.
 func (m *Model) visibleChats() []models.Chat {
-	chats := m.chats()
-
-	q := strings.ToLower(strings.TrimSpace(m.searchQuery))
-	if q == "" {
-		return m.unarchived(chats)
-	}
-
-	out := make([]models.Chat, 0, len(chats))
-	for _, c := range chats {
-		if !matches(c, q) {
-			continue
-		}
-		// A search should reach archived chats; otherwise "find that old group"
-		// is impossible.
-		out = append(out, c)
-	}
-	return out
-}
-
-func (m *Model) unarchived(chats []models.Chat) []models.Chat {
-	out := make([]models.Chat, 0, len(chats))
-	for _, c := range chats {
-		if c.Archived {
+	out := make([]models.Chat, 0, len(m.chats))
+	for _, c := range m.chats {
+		// Archived conversations are hidden unless they match a query: the list
+		// should be short by default, but an archived conversation the user
+		// remembers must still be findable.
+		if c.Archived && m.search == "" {
 			continue
 		}
 		out = append(out, c)
 	}
-	return out
-}
-
-// matches reports whether a chat matches a lowercased query.
-func matches(c models.Chat, q string) bool {
-	if strings.Contains(strings.ToLower(c.FallbackName()), q) {
-		return true
-	}
-	if c.Contact != nil && strings.Contains(strings.ToLower(c.Contact.Phone), q) {
-		return true
-	}
-	// Searching the preview makes it possible to find a conversation by what
-	// was said in it, which is what people actually try to do.
-	return strings.Contains(strings.ToLower(c.PreviewString()), q)
-}
-
-// chats returns the cached chat list.
-//
-// The slice is sorted on read rather than stored sorted, because a background
-// refresh replaces the cache wholesale and re-sorting there would make the
-// selected row jump whenever a new message arrived.
-func (m *Model) chats() []models.Chat {
-	if len(m.chatCache) == 0 {
-		return nil
-	}
-	out := make([]models.Chat, len(m.chatCache))
-	copy(out, m.chatCache)
 	models.SortChats(out)
 	return out
 }
 
-// setChats replaces the cached chat list, preserving the selection where
-// possible.
+// unreadTotal counts unread messages across every conversation.
 //
-// Preserving the selection by identifier rather than by index is what keeps the
-// highlighted chat stable when a message arrives and reorders the list.
-func (m *Model) setChats(chats []models.Chat) tea.Cmd {
-	previous := m.selectedChatID()
-
-	m.chatCache = chats
-
-	if previous == "" {
-		// No prior selection: land on the first chat, or nothing if the list is
-		// empty.
-		if len(chats) > 0 {
-			m.chatSel = 0
-		} else {
-			m.chatSel = -1
+// Muted conversations are excluded. A notification client that counts messages the
+// user chose not to be notified about is nagging them about their own settings.
+func (m *Model) unreadTotal() int {
+	total := 0
+	for _, c := range m.chats {
+		if c.Muted {
+			continue
 		}
-	} else {
-		m.chatSel = m.indexOfChat(previous)
+		total += c.UnreadCount
 	}
+	return total
+}
 
-	m.clampSelectionToFilter()
-	m.chatOffset = m.chatOffsetFor(m.chatSel)
-
-	// Open the first conversation as soon as the list arrives. Doing it here
-	// rather than in Init is what makes it work: the selection is only known once
-	// the list has been loaded, so a fetch issued from Init would have nothing to
-	// open yet.
-	if m.openedChat == "" && m.chatSel >= 0 {
-		if chat, ok := m.currentChat(); ok {
-			m.openedChat = chat.ID
-			return m.queue(m.fetchTranscript(chat))
+// typingIn names the conversation whose peer is composing, or "".
+func (m *Model) typingIn() string {
+	for _, c := range m.chats {
+		if c.Typing {
+			return c.FallbackName()
 		}
 	}
-	return nil
+	return ""
 }
 
-// fetchTranscript loads a chat's messages without moving focus.
+// --- region synchronisation ---
+
+// sharedState builds the value handed to the regions each frame.
 //
-// Separated from openChat because showing a conversation and fetching its history
-// are different concerns: the first changes where typing goes, the second does
-// not.
-func (m *Model) fetchTranscript(chat models.Chat) tea.Cmd {
-	svc := m.deps.Message
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		msgs, err := svc.History(ctx, chat.ID, historyLimit)
-		if err != nil {
-			return errMsg{err: err}
-		}
-		return messagesLoadedMsg{chat: chat.ID, messages: msgs}
+// It is passed by value so that a region cannot mutate the application's state by
+// reaching into the slice it was given.
+func (m *Model) sharedState() component.Model {
+	return component.Model{
+		Chats:         m.visibleChats(),
+		CurrentChatID: m.currentChatID(),
+		Messages:      m.messages,
+		TypingIn:      m.typingIn(),
+		UnreadTotal:   m.unreadTotal(),
+		Selected:      m.selected,
+		Search:        m.search,
+		SearchActive:  m.searching,
 	}
 }
 
-// selectedChatID returns the identifier of the selected chat.
-func (m *Model) selectedChatID() models.ChatID {
-	visible := m.visibleChats()
-	if m.chatSel < 0 || m.chatSel >= len(visible) {
-		return ""
-	}
-	return visible[m.chatSel].ID
-}
-
-// indexOfChat finds a chat's position in the filtered list.
-func (m *Model) indexOfChat(id models.ChatID) int {
-	for i, c := range m.visibleChats() {
-		if c.ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
-// currentChat returns the open chat.
-func (m *Model) currentChat() (models.Chat, bool) {
-	visible := m.visibleChats()
-	if m.chatSel < 0 || m.chatSel >= len(visible) {
-		return models.Chat{}, false
-	}
-	return visible[m.chatSel], true
-}
-
-// clampSelectionToFilter keeps the selection inside the filtered list.
+// syncRegions pushes the application's state into every region.
 //
-// Needed because the filter can shrink under the selection: typing a query that
-// matches nothing must not leave a highlight pointing at an index that no longer
-// exists.
-func (m *Model) clampSelectionToFilter() {
-	n := len(m.visibleChats())
-	switch {
-	case n == 0:
-		m.chatSel = -1
-	case m.chatSel < 0:
-		m.chatSel = 0
-	case m.chatSel >= n:
-		m.chatSel = n - 1
+// It is called after anything that could change what a region draws. Doing it here
+// rather than in each region's own Update is what keeps the call sites from drifting:
+// there is one place that knows a frame needs its inputs refreshed.
+func (m *Model) syncRegions() {
+	m.syncSidebar()
+	m.syncTranscript()
+}
+
+// syncSidebar pushes the state the sidebar draws from.
+func (m *Model) syncSidebar() { m.sidebar.SetModel(m.sharedState()) }
+
+// syncTranscript pushes the state the transcript draws from.
+func (m *Model) syncTranscript() {
+	m.transcript.SetModel(m.sharedState())
+	if chat, ok := m.currentChat(); ok {
+		m.transcript.SetGroupChat(chat.Type.IsGroup())
 	}
 }
 
-// chatOffsetFor returns the sidebar scroll offset for a selection.
-func (m *Model) chatOffsetFor(sel int) int {
-	return chatlist.OffsetForSelection(sel, len(m.visibleChats()), m.sidebarRows())
-}
+// --- composition modes ---
 
-// maxChatOffset returns the largest valid sidebar scroll offset.
-func (m *Model) maxChatOffset() int {
-	rows := m.sidebarRows()
-	return maxInt(0, len(m.visibleChats())-rows)
-}
-
-// sidebarRows returns how many chat rows fit in the sidebar.
+// beginReply starts a reply to the cursor message.
 //
-// The sidebar's header, search box, divider and the status bar all consume
-// space, and getting this wrong is what makes the scrollbar overshoot.
-func (m *Model) sidebarRows() int {
-	// 1 status bar + 3 chrome lines (header, search, divider).
-	h := m.height - m.theme.Metrics.StatusHeight - 3
-	if h < 0 {
-		h = 0
-	}
-	return h / chatlist.RowHeight
-}
-
-// currentMessages returns the open chat's transcript.
-func (m *Model) currentMessages() []models.Message {
-	if len(m.msgCache) == 0 {
+// A revoked message cannot be replied to: its content is gone, so a quote of it would
+// be an empty line saying nothing about nothing.
+func (m *Model) beginReply() tea.Cmd {
+	msg, ok := m.transcript.MessageAt(m.transcript.Cursor())
+	if !ok || msg.Revoked {
 		return nil
 	}
-	return m.msgCache
+
+	// Replying supersedes an edit in progress. The two are mutually exclusive by
+	// construction — the composer holds one mode — so the impossible state of quoting
+	// one message while editing another cannot be represented.
+	m.editing = ""
+	name := m.senderName(msg)
+	m.replyTo = &models.MessageRef{
+		ID:         msg.ID,
+		SenderID:   msg.SenderID,
+		SenderName: name,
+		Body:       msg.Text(),
+		Kind:       msg.Kind,
+		Timestamp:  msg.Timestamp,
+		Revoked:    msg.Revoked,
+	}
+	m.composer.SetReply(name)
+	return m.setFocus(component.RegionComposer)
 }
 
-// setMessages replaces the cached transcript for a chat.
+// beginEdit starts editing the cursor message.
 //
-// The chat check matters: a slow history response for a chat the user has since
-// left must not overwrite the transcript they are now reading.
-func (m *Model) setMessages(chatID string, msgs []models.Message) {
-	if id := models.ChatID(chatID); id != m.currentChatID() {
-		return
+// Only the account's own messages can be edited. Refusing with an explanation rather
+// than silently doing nothing matters: a key that appears dead is indistinguishable
+// from a broken binding, and the user will go looking for the wrong bug.
+func (m *Model) beginEdit() tea.Cmd {
+	msg, ok := m.transcript.MessageAt(m.transcript.Cursor())
+	switch {
+	case !ok:
+		return nil
+	case msg.Revoked:
+		return m.toast("ese mensaje fue eliminado", false)
+	case !msg.IsOutgoing():
+		return m.toast("solo se pueden editar tus mensajes", false)
 	}
 
-	wasAtBottom := m.atBottom
-	previous := m.cursorID()
-
-	m.msgCache = msgs
-
-	// The transcript may have been re-fetched without messages, in which case
-	// there is nothing to select.
-	if len(msgs) == 0 {
-		m.msgSel = -1
-		m.rows = nil
-		m.msgOffset = 0
-		return
-	}
-
-	m.msgSel = m.indexOfMessage(previous)
-	if m.msgSel < 0 {
-		// Follow the newest message, which is what a chat client does when a
-		// conversation is opened.
-		m.msgSel = len(msgs) - 1
-	}
-	m.atBottom = wasAtBottom || m.msgSel >= len(msgs)-1
-
-	m.layoutRows()
+	m.replyTo = nil
+	m.editing = msg.ID
+	m.composer.SetEdit(m.senderName(msg), msg.Text())
+	return m.setFocus(component.RegionComposer)
 }
 
-// indexOfMessage finds a message's position in the transcript.
-func (m *Model) indexOfMessage(id models.MessageID) int {
-	if id == "" {
-		return -1
+// senderName returns who sent a message, in a form suitable for quoting.
+func (m *Model) senderName(msg models.Message) string {
+	switch {
+	case msg.IsOutgoing():
+		return "tú"
+	case m.senderNames[msg.SenderID] != "":
+		return m.senderNames[msg.SenderID]
+	default:
+		// "alguien" rather than a blank: a quote whose author is missing reads as a
+		// rendering failure, whereas one that says "someone" reads as what it is.
+		return "alguien"
 	}
-	for i, msg := range m.currentMessages() {
-		if msg.ID == id {
-			return i
+}
+
+// --- helpers ---
+
+// centre puts s on a line exactly width cells wide.
+func centre(s string, width int) string {
+	pad := width - text.VisibleWidth(s)
+	if pad <= 0 {
+		return s
+	}
+	left := pad / 2
+	return strings.Repeat(" ", left) + s + strings.Repeat(" ", pad-left)
+}
+
+// plural renders a count with a correctly pluralised noun.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return text.Itoa(n) + " " + noun + "s"
+}
+
+// orDash returns s, or an em dash when empty, for info panels.
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+// composerModeSend is the composer's ordinary mode, aliased so the comparison in
+// onEscape reads as a mode check rather than as a magic number.
+const composerModeSend = composer.ModeSend
+
+// indexSenders builds the contact-name lookup used when quoting a message.
+//
+// It is built from the cached conversations rather than queried per message because a
+// quote is rendered on every frame of a reply, and a service call per frame would make
+// scrolling a conversation stutter.
+func (m *Model) indexSenders() {
+	for _, c := range m.chats {
+		if c.Contact != nil && c.Contact.Name != "" {
+			m.senderNames[c.Contact.ID] = c.Contact.Name
 		}
 	}
-	return -1
 }
 
-// messageAt returns the transcript entry at an index.
-func (m *Model) messageAt(i int) (models.Message, bool) {
-	msgs := m.currentMessages()
-	if i < 0 || i >= len(msgs) {
-		return models.Message{}, false
+// maxInt returns the larger of two ints.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
 	}
-	return msgs[i], true
+	return b
 }
 
-// messageCount returns the transcript length.
-func (m *Model) messageCount() int { return len(m.currentMessages()) }
-
-// cursorID returns the message under the keyboard cursor.
-func (m *Model) cursorID() models.MessageID {
-	msg, ok := m.messageAt(m.msgSel)
-	if !ok {
-		return ""
-	}
-	return msg.ID
-}
-
-// senderName resolves a message's display name.
+// repeatLines returns n copies of s as separate lines.
 //
-// For a group, the push name is needed because a group transcript is
-// meaningless without knowing who said what.
-func (m *Model) senderName(msg models.Message) string {
-	chat, ok := m.currentChat()
-	if !ok {
-		return string(msg.SenderID)
+// The lines are joined without a trailing newline by the caller. A trailing one would
+// be counted as an extra empty row by every join that follows, adding exactly one row
+// to the frame — which is how a status bar ends up pushed off the bottom of the screen
+// by a one-character divider.
+func repeatLines(s string, n int) []string {
+	if n <= 0 {
+		return nil
 	}
-	if chat.Contact != nil && chat.Contact.ID == msg.SenderID {
-		return chat.Contact.DisplayName()
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
 	}
-
-	// A cached roster is out of scope for Phase 1; the identifier stands in, and
-	// the group roster replaces it in Phase 6.
-	if chat.Type.IsGroup() {
-		return string(msg.SenderID)
-	}
-	return string(msg.SenderID)
-}
-
-// viewportHeight returns the number of transcript lines visible.
-func viewportHeight(m *Model) int {
-	if m.height <= 0 {
-		return 1
-	}
-	// Header, composer and status bar.
-	mt := m.theme.Metrics
-	h := m.height - mt.HeaderHeight - mt.ComposerHeight - mt.StatusHeight
-	return maxInt(h, 1)
-}
-
-// sortedSelectedIDs returns the selected identifiers in a stable order, so that
-// operations over a selection do not depend on map iteration.
-func sortedSelectedIDs(sel map[models.MessageID]bool) []models.MessageID {
-	out := make([]models.MessageID, 0, len(sel))
-	for id := range sel {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
-
-var _ = keybindings.ActionNone

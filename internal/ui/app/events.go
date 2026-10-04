@@ -1,29 +1,171 @@
 package app
 
 import (
-	"context"
-	"time"
-
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/wterm/wterm/internal/keybindings"
 	"github.com/wterm/wterm/internal/models"
 	"github.com/wterm/wterm/internal/notifications"
-	"github.com/wterm/wterm/internal/ui/components/overlay"
+	"github.com/wterm/wterm/internal/ui/component"
+	"github.com/wterm/wterm/internal/ui/components/composer"
 	"github.com/wterm/wterm/internal/whatsapp"
 )
 
-// setEvents folds a batch of sync events into the model.
+// onEvent routes an event emitted by a region.
 //
-// Batching matters: a resync delivers thousands of events, and applying them one
-// redraw at a time would make the interface unusable for the duration.
-func (m *Model) setEvents(events []whatsapp.Event) tea.Cmd {
-	if len(events) == 0 {
+// This is where the architecture pays off: every consequence of a region's intent is
+// decided here, in one function, with no region code involved. The transcript emitting
+// "the user wants to reply" is a fact about the user; what that means for the
+// composer, the focus and the services is this switch.
+//
+// The cases that merely re-fetch are grouped, because a region reporting a selection
+// and a service reporting a changed message both mean the same thing: this region
+// needs to know.
+func (m *Model) onEvent(e component.Event) tea.Cmd {
+	switch e.Kind {
+	case component.KindFocusChat:
+		return m.openConversation(e.ChatID)
+
+	case component.KindFocusRegion:
+		return m.setFocus(e.Command.ID)
+
+	case component.KindSearchChanged:
+		m.search = e.Query
+		m.syncSidebar()
+		return nil
+
+	case component.KindSearchDismissed:
+		return m.dismissSearch()
+
+	case component.KindSubmit:
+		// A submission carrying a mode is the composer pressing enter; one without is
+		// the composer reporting that its buffer changed, which the application only
+		// needs so that a redraw happens for the autocomplete state.
+		if mode, ok := e.Payload.(composer.Mode); ok {
+			return m.sendDraft(e.Text, mode)
+		}
+		return nil
+
+	case component.KindCancel:
+		return m.onEscape()
+
+	case component.KindScroll:
+		m.transcript.Scroll(e.Delta)
+		return nil
+
+	case component.KindScrollTo:
+		m.transcript.ScrollToNewest()
+		return nil
+
+	case component.KindMessageSelected:
+		// The transcript told us where its cursor is. Nothing to do: the region owns
+		// that state and the application reads it when it needs it. The event exists
+		// so that a future root could react — a status line showing the selected
+		// message, say — without the transcript knowing.
+		return nil
+
+	case component.KindMessageActivated:
+		return m.activateMessage(e)
+
+	case component.KindSelectionToggled:
+		if m.selected[e.MessageID] {
+			delete(m.selected, e.MessageID)
+		} else {
+			m.selected[e.MessageID] = true
+		}
+		m.syncTranscript()
+		return nil
+
+	case component.KindCommandChosen:
+		if a, ok := commandAction[e.Command.ID]; ok {
+			return m.run(a)
+		}
+		// A command with no action behind it is a table bug. Refusing loudly in a
+		// toast beats a key that silently does nothing.
+		return m.toast("comando no implementado: "+e.Command.ID, true)
+
+	case component.KindDismissOverlay:
+		m.palette.Close()
+		return nil
+
+	case component.KindQuit:
+		return tea.Quit
+
+	default:
+		// A kind this model does not act on. Spelling the default out rather than
+		// listing every kind keeps the switch honest when one is added: the new case
+		// lands here and is silently ignored, which the compiler cannot catch but a
+		// reader can see.
+		return nil
+	}
+}
+
+// activateMessage runs an action a region requested on a message or a conversation.
+//
+// The region names the action by the string form of its keybinding action rather than
+// interpreting it, so that adding a key never requires touching region code and a
+// typo in a region resolves to a no-op rather than to the wrong effect.
+func (m *Model) activateMessage(e component.Event) tea.Cmd {
+	a, ok := keybindings.ParseAction(e.Text)
+	if !ok {
+		return nil
+	}
+	return m.run(a)
+}
+
+// openConversation makes a conversation current and fetches its transcript.
+func (m *Model) openConversation(id models.ChatID) tea.Cmd {
+	if id == "" {
 		return nil
 	}
 
-	// Track whether the open chat changed, so the transcript is only re-laid out
-	// once at the end rather than per event.
+	// Move the sidebar's cursor so that "open" and "select" agree on what is open.
+	// The sidebar owns that state, so it is asked rather than set from outside.
+	m.sidebar.SelectChat(id)
+
+	if m.opened == id {
+		// Already open: the fetch is a no-op and the conversation is simply brought
+		// into view. Re-fetching on every press would make pressing enter twice feel
+		// like a hang on a slow connection.
+		m.transcript.ScrollToNewest()
+		return nil
+	}
+
+	m.opened = id
+	m.messages = nil
+	m.syncTranscript()
+	m.queue(m.reload(id))
+	return nil
+}
+
+// sendDraft delivers a body the composer submitted.
+//
+// The command is built before the compose-mode fields are cleared, for the same reason
+// as in [Model.submitDraft]: the command reads them.
+func (m *Model) sendDraft(body string, mode composer.Mode) tea.Cmd {
+	chat, ok := m.currentChat()
+	if !ok {
+		return nil
+	}
+	cmd := m.send(chat.ID, body, mode)
+	m.replyTo, m.editing = nil, ""
+	return cmd
+}
+
+// --- account events ---
+
+// setEvents folds a batch of account events into the model.
+//
+// Batching is what keeps a resync usable: two thousand history messages become a
+// handful of redraws rather than two thousand, because the model decides once what
+// needs refetching rather than once per message.
+func (m *Model) setEvents(events []whatsapp.Event) tea.Cmd {
+	if len(events) == 0 {
+		// The loop continues even when a batch is empty: returning nil would stop the
+		// stream from being drained, and the next batch would never arrive.
+		return m.waitForEvent()
+	}
+
 	var (
 		openChanged bool
 		chatsDirty  bool
@@ -46,12 +188,12 @@ func (m *Model) setEvents(events []whatsapp.Event) tea.Cmd {
 			chatsDirty = true
 
 		case whatsapp.EventPresence, whatsapp.EventTyping:
-			// Presence changes only affect the header and the sidebar badge; the
-			// transcript itself is untouched.
+			// Presence touches the header and the sidebar badge only. The transcript is
+			// untouched, so no re-fetch is needed.
 			chatsDirty = true
 
 		case whatsapp.EventConnection:
-			m.conn = displayConn(e.Connection)
+			m.connection = connectionFor(e.Connection)
 
 		case whatsapp.EventError:
 			if e.Err != nil {
@@ -59,40 +201,47 @@ func (m *Model) setEvents(events []whatsapp.Event) tea.Cmd {
 			}
 
 		case whatsapp.EventUnknown:
-			// An event with no payload is nothing to act on. Listed explicitly so
-			// that adding a kind to the interface is a compile-time decision rather
-			// than a silently unhandled branch.
+			// An event with no payload is nothing to act on. Listed explicitly so that
+			// adding a kind to the interface is a compile-time decision rather than a
+			// silently unhandled branch that ships.
 		}
 	}
 
-	// A change in the open conversation needs both a re-fetch and a fresh layout:
-	// the cached transcript is only updated by the service call.
 	if openChanged {
-		cmds = append(cmds, m.reloadOpenChat())
+		if id := m.currentChatID(); id != "" {
+			cmds = append(cmds, m.reload(id))
+		}
 	}
-
 	if chatsDirty {
 		cmds = append(cmds, m.listChats())
 	}
-	// Keep the wait loop running: a stream that stops being drained would stall
-	// the connection.
+
+	// Keep the loop running. This is the one command that must always be re-armed:
+	// forgetting it here silently ends message reception with nothing on screen
+	// indicating why.
 	cmds = append(cmds, m.waitForEvent())
+
 	return tea.Batch(cmds...)
 }
 
-// raiseNotification alerts the user about an incoming message.
+// raiseNotification queues a desktop notification for an incoming message.
 //
-// A message in the chat currently on screen does not notify: the user is already
-// looking at it, and a notification for it is pure noise.
+// A message in the conversation on screen does not notify: the user is already looking
+// at it, and a notification for it is pure noise. Neither does a muted conversation —
+// muting is a request not to be interrupted, and ignoring it is worse than the
+// feature not existing.
 func (m *Model) raiseNotification(e whatsapp.Event) {
 	if e.Message.Direction != models.DirectionIncoming {
 		return
 	}
-	if e.ChatID == m.currentChatID() && m.focus != keybindings.PanelSidebar {
+	if e.ChatID == m.currentChatID() {
+		return
+	}
+	if chat, ok := m.chatByID(e.ChatID); ok && chat.Muted {
 		return
 	}
 
-	name := "New message"
+	name := "Mensaje nuevo"
 	if chat, ok := m.chatByID(e.ChatID); ok {
 		name = chat.FallbackName()
 	}
@@ -106,136 +255,4 @@ func (m *Model) raiseNotification(e whatsapp.Event) {
 		Body:   body,
 		ChatID: string(e.ChatID),
 	})
-}
-
-// chatByID looks up a chat by identifier in the cache.
-func (m *Model) chatByID(id models.ChatID) (models.Chat, bool) {
-	for _, c := range m.chatCache {
-		if c.ID == id {
-			return c, true
-		}
-	}
-	return models.Chat{}, false
-}
-
-// reloadOpenChat re-fetches the transcript of the chat currently on screen.
-func (m *Model) reloadOpenChat() tea.Cmd {
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-	return m.fetchTranscript(chat)
-}
-
-// drainNotices delivers queued notifications.
-//
-// Notifications are raised on the UI goroutine rather than from the sync reader, so
-// that the notifier's exec calls cannot stall the event stream.
-func (m *Model) drainNotices() tea.Cmd {
-	if len(m.pendingNotices) == 0 {
-		return nil
-	}
-
-	notices := m.pendingNotices
-	m.pendingNotices = nil
-
-	notifier := m.notifier
-	return func() tea.Msg {
-		for _, e := range notices {
-			notifier.Notify(e)
-		}
-		return nil
-	}
-}
-
-// toastRaisedMsg is returned when a command pushes a toast from its own
-// goroutine. It exists purely to give Bubble Tea something to redraw on.
-type toastRaisedMsg struct{}
-
-// toastTimeout removes an expired toast.
-type toastExpiredMsg struct{ at time.Time }
-
-// scheduleExpiry returns a command that fires when the next toast should go.
-//
-// A timer rather than a frame counter: the toast lifetime is wall-clock, and
-// tying it to redraws would make it vanish immediately during a sync.
-func (m *Model) scheduleExpiry(at time.Time) tea.Cmd {
-	if m.DisableTimers {
-		// Set by tests. A tea.Cmd is a func rather than an interface, so a test
-		// cannot type-assert to recognise a sleeping command; the model is asked
-		// directly instead of blocking on the timer.
-		return nil
-	}
-
-	d := time.Until(at)
-	if d <= 0 {
-		return func() tea.Msg { return toastExpiredMsg{} }
-	}
-	return tea.Tick(d, func(time.Time) tea.Msg { return toastExpiredMsg{at: at} })
-}
-
-// expireToasts pops toasts that have outlived their display window.
-func (m *Model) expireToasts(now time.Time) {
-	for m.overlays.Len() > 0 {
-		top, ok := m.overlays.Top()
-		if !ok || top.Kind != overlay.KindToast {
-			return
-		}
-		if now.Before(top.ExpiresAt) {
-			return
-		}
-		m.overlays.Pop()
-	}
-}
-
-// PumpEvents starts the goroutine that drains the sync event stream.
-//
-// It is called once from main before Bubble Tea starts, so that events arriving
-// during startup are buffered rather than dropped. The returned cancel function
-// stops the goroutine; [Model.Shutdown] calls it.
-func (m *Model) PumpEvents() {
-	if m.deps.Sync == nil {
-		return
-	}
-
-	m.eventMu.Lock()
-	if m.eventCancel != nil {
-		// Already pumping.
-		m.eventMu.Unlock()
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.eventCancel = cancel
-	events := m.deps.Sync.Events()
-	m.eventMu.Unlock()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case e, ok := <-events:
-				if !ok {
-					return
-				}
-				// Send to the program rather than mutating the model: the model
-				// belongs to the UI goroutine, and Bubble Tea's Send is the only
-				// safe way in from elsewhere.
-				if m.program != nil {
-					m.program.Send(eventsMsg{events: []whatsapp.Event{e}})
-				}
-			}
-		}
-	}()
-}
-
-// AttachProgram records the running program so the event pump can post to it.
-//
-// It must be called after NewProgram and before Run, which is the only window in
-// which the program exists but has not yet started its loop.
-func (m *Model) AttachProgram(p *tea.Program) {
-	m.eventMu.Lock()
-	m.program = p
-	m.eventMu.Unlock()
 }

@@ -430,6 +430,17 @@ func (s Stack) Len() int { return len(s.items) }
 // Empty reports whether no overlay is open.
 func (s Stack) Empty() bool { return len(s.items) == 0 }
 
+// All returns a copy of the stack, oldest first.
+//
+// The copy is what lets a caller inspect the whole stack without being able to mutate
+// it: expiry, for instance, has to look at every toast but may only change the stack
+// through Pop.
+func (s Stack) All() []Overlay {
+	out := make([]Overlay, len(s.items))
+	copy(out, s.items)
+	return out
+}
+
 // SetTop replaces the topmost overlay, for menus whose cursor moved.
 func (s *Stack) SetTop(o Overlay) {
 	if len(s.items) > 0 {

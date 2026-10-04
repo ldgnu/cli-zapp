@@ -1,44 +1,11 @@
 package app
 
 import (
-	"context"
 	"time"
 
 	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/notifications"
 	"github.com/wterm/wterm/internal/whatsapp"
 )
-
-// Shutdown releases resources the model holds.
-//
-// Bubble Tea's Run has returned by the time this is called, so the terminal has
-// already been restored. That makes it the right place to stop background work:
-// a goroutine still writing to a now-dead terminal would corrupt the shell's
-// prompt.
-func (m *Model) Shutdown() error {
-	// Stop the pump first, so it cannot post to a program that has already
-	// returned, and so that Stop's channel close is not raced by a send.
-	m.eventMu.Lock()
-	if m.eventCancel != nil {
-		m.eventCancel()
-		m.eventCancel = nil
-	}
-	m.eventMu.Unlock()
-
-	if m.deps.Sync == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	return m.deps.Sync.Stop(ctx)
-}
-
-// SetNotifier attaches the notifier used for background messages.
-//
-// It is a setter rather than a constructor parameter because the notifier depends
-// on the environment — whether notify-send exists — which is resolved in main
-// after the model would otherwise already exist.
-func (m *Model) SetNotifier(n *notifications.Notifier) { m.notifier = n }
 
 // DemoData builds a fake populated with realistic conversations.
 //
@@ -144,6 +111,14 @@ func DemoData() *whatsapp.Fake {
 		"It's the same idea. Cards in, results out, no room for interpretation.",
 		"That is reassuring. I will review it tonight.",
 	)
+
+	// The account's own messages. Without them the demo shows only the left-aligned
+	// half of the transcript: no right-aligned bubbles, no delivery marks, no failed
+	// send. Half the rendering would be reachable only from a test.
+	f.Speak("chat-ada", "I read the note on the looping notation this morning.")
+	f.Speak("chat-ada", "One thing is still unclear to me: the store. Where does the "+
+		"result go while the cards are being read, and who decides that?")
+	f.Fail("chat-ada", "I will send the rest tonight, promise.")
 
 	seed("chat-grace", "5491100000003",
 		"Found the bug. It was a moth.",

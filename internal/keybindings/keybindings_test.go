@@ -542,3 +542,50 @@ func TestExplicitHelpWinsOverHumanised(t *testing.T) {
 		t.Errorf("explicit help should win, got %q", got)
 	}
 }
+
+// TestConflictsCompareEveryPairNotJustTheFirst is the regression test for the
+// detector's original defect.
+//
+// A key claimed once in the sidebar and twice in the message list is a conflict between
+// the two message-list claims. Comparing every claim against only the first would call
+// all three unambiguous, because the first is in a different panel — which is how
+// ctrl+e was bound to both "edit message" and "scroll down" while the startup check
+// reported nothing.
+func TestConflictsCompareEveryPairNotJustTheFirst(t *testing.T) {
+	m := NewMap([]Binding{
+		{Action: ActionToggleArchive, Panel: PanelSidebar, Keys: []Key{{Rune: 'e'}}},
+		{Action: ActionEdit, Panel: PanelMessages, Keys: []Key{{Rune: 'e'}}},
+		{Action: ScrollDown, Panel: PanelMessages, Keys: []Key{{Rune: 'e'}}},
+	})
+
+	c := m.Conflicts()
+	if len(c) != 1 {
+		t.Fatalf("want 1 conflict, got %d: %+v", len(c), c)
+	}
+	if !slices.Equal(c[0].Actions, []Action{ActionEdit, ScrollDown}) {
+		t.Errorf("the conflicting pair is the two in the same panel, got %v", c[0].Actions)
+	}
+}
+
+// TestConflictsIgnoreDifferentPanels is the other half: two panel bindings on different
+// panels are never live at the same time and must not be reported.
+func TestConflictsIgnoreDifferentPanels(t *testing.T) {
+	m := NewMap([]Binding{
+		{Action: ActionToggleArchive, Panel: PanelSidebar, Keys: []Key{{Rune: 'e'}}},
+		{Action: ActionEdit, Panel: PanelMessages, Keys: []Key{{Rune: 'e'}}},
+	})
+	if c := m.Conflicts(); len(c) != 0 {
+		t.Errorf("bindings in different panels are not simultaneous: %+v", c)
+	}
+}
+
+// TestTheSameActionTwiceIsNotAConflict covers the duplicate case, which the defaults
+// rely on: one action may legitimately carry several keys.
+func TestTheSameActionTwiceIsNotAConflict(t *testing.T) {
+	m := NewMap([]Binding{
+		{Action: ActionQuit, Global: true, Keys: []Key{{Rune: 'q'}, {Rune: 'x'}}},
+	})
+	if c := m.Conflicts(); len(c) != 0 {
+		t.Errorf("one action with several keys is not a conflict: %+v", c)
+	}
+}

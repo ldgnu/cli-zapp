@@ -25,23 +25,41 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # scripts/ptycheck.py rather than an inline script.
+      #
+      # The smoke test has to exist, and a second copy of it inside this file would be
+      # a second thing to keep in step with the application — the failure mode being a
+      # check that asserts on a string the interface no longer uses, which fails for a
+      # reason that has nothing to do with the code.
+      - name: Build
+        run: make build
+
       - name: Check formatting
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Test with the race detector
+        run: make test
+
+      - name: Confirm the binary is static
         run: |
-          unformatted=$(gofmt -l ./cmd ./internal)
-          if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt'd:"
-            echo "$unformatted"
+          # CGO is off deliberately: the binary must be static, and the build must not
+          # depend on the runner's C toolchain matching anything.
+          if file bin/wterm | grep -q 'dynamically linked'; then
+            echo "::error::wterm must be statically linked"
+            file bin/wterm
             exit 1
           fi
 
-      - name: Vet
-        run: go vet ./...
+      - name: Smoke test on a real pty
+        # A Bubble Tea application negotiates capabilities with the terminal and blocks
+        # on answers it never receives without a tty on stdin, so a TUI cannot be
+        # exercised any other way.
+        run: make pty
 
-      - name: Test with the race detector
-        run: go test -race -coverprofile=coverage.out ./...
-
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage.out
@@ -57,84 +75,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # v2.14.0 rather than the latest tag: v2.6.x cannot read Go 1.27 export data and
+      # fails with a typecheck error that looks like a defect in the code.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.6.2
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      # CGO is off deliberately: the binary must be static, and the build must
-      # not depend on the runner's C toolchain matching anything.
-      - name: Build
-        run: go build -trimpath -ldflags '-s -w' -o wterm ./cmd/wterm
-
-      - name: Confirm the binary is static
-        run: |
-          if file wterm | grep -q 'dynamically linked'; then
-            echo "::error::wterm must be statically linked"
-            file wterm
-            exit 1
-          fi
-
-      - name: Smoke test on a pty
-        # A TUI cannot run without a terminal, so the only meaningful smoke test
-        # is on a real one.
-        run: |
-          python3 - <<'PY'
-          import fcntl, os, pty, re, select, struct, sys, termios, time
-
-          pid, fd = pty.fork()
-          if pid == 0:
-              os.environ["TERM"] = "xterm-256color"
-              os.execv("./wterm", ["wterm"])
-              os._exit(127)
-
-          fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-
-          out = bytearray()
-          deadline = time.time() + 3
-          while time.time() < deadline:
-              r, _, _ = select.select([fd], [], [], 0.1)
-              if r:
-                  try:
-                      out += os.read(fd, 65536)
-                  except OSError:
-                      break
-
-          os.write(fd, b"\x11")  # ctrl+q
-          time.sleep(0.5)
-
-          exited = False
-          for _ in range(50):
-              try:
-                  wpid, _ = os.waitpid(pid, os.WNOHANG)
-              except ChildProcessError:
-                  exited = True
-                  break
-              if wpid == pid:
-                  exited = True
-                  break
-              time.sleep(0.1)
-
-          if not exited:
-              os.kill(pid, 9)
-              print("::error::wterm did not exit on ctrl+q")
-              sys.exit(1)
-
-          plain = re.sub(rb"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][B0]|\x1b[=>]|\x1b\][^\x07]*\x07|\x1b.", b"", bytes(out)).decode("utf-8", "replace")
-
-          missing = [n for n in ("Chats", "Ada Lovelace", "Write a message") if n not in plain]
-          if missing:
-              print(f"::error::wterm rendered without {missing}")
-              sys.exit(1)
-
-          print(f"wterm rendered {len(out)} bytes and exited cleanly")
-          PY
+          version: v2.14.0

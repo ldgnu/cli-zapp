@@ -5,12 +5,21 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Binding associates an [Action] with the keys that trigger it.
 type Binding struct {
 	Action Action
 	Keys   []Key
+
+	// Short is the one-word label the status bar shows for this action.
+	//
+	// It is declared beside the sentence rather than derived from it, because a bar
+	// that truncated the sentence would put "Cancelar la ac…" on screen. An action with
+	// no short label simply does not appear in the bar.
+	Short string
+
 	// Panel restricts the binding to one focus region. A nil Panel means the
 	// binding is global.
 	//
@@ -78,15 +87,45 @@ func NewMap(bindings []Binding) Map {
 // A printable key with no modifier returns [ActionNone] when unbound, which is
 // the signal that a focused text field should consume it.
 func (m Map) Resolve(k Key, focus Panel) Action {
-	if a, ok := m.byKey[k]; ok {
+	if a, ok := m.lookup(m.byKey, k); ok {
 		return a
 	}
 	if table, ok := m.panelByKey[focus]; ok {
-		if a, ok := table[k]; ok {
+		if a, ok := m.lookup(table, k); ok {
 			return a
 		}
 	}
 	return ActionNone
+}
+
+// lookup finds k in a binding table, tolerating a redundant shift.
+//
+// # Why shift is optional for a rune
+//
+// Terminals disagree about how they report a punctuation key. A keyboard has no '?'
+// key: the user presses shift and '/', and depending on the emulator and the
+// terminfo entry the application receives either Code '?' with no modifier or
+// Code '?' with ModShift. A binding table that insisted on the exact modifier set
+// would therefore match ctrl+? on one terminal and not on the next — a bug that
+// looks like the shortcut is broken rather than like the two sides disagree about
+// what the key is.
+//
+// So a lookup on a rune key retries without ModShift, and only if the exact key
+// missed. Named keys are unaffected: shift+tab is a genuinely different key from
+// tab, and treating them as the same would make the two indistinguishable.
+//
+// The exact match is tried first so that a user who deliberately bound both
+// ctrl+a and ctrl+shift+a gets what they wrote.
+func (m Map) lookup(table map[Key]Action, k Key) (Action, bool) {
+	if a, ok := table[k]; ok {
+		return a, true
+	}
+	if k.Rune != 0 && k.Mod.Has(ModShift) && k.Rune < utf8.RuneSelf {
+		if a, ok := table[Key{Rune: k.Rune, Mod: k.Mod &^ ModShift}]; ok {
+			return a, true
+		}
+	}
+	return ActionNone, false
 }
 
 // ResolveGlobal maps a key press to a globally bound action, ignoring focus.
@@ -97,7 +136,8 @@ func (m Map) Resolve(k Key, focus Panel) Action {
 // consumed ctrl+q, so the global bindings have to be consulted before the field
 // sees the press at all.
 func (m Map) ResolveGlobal(k Key) Action {
-	return m.byKey[k]
+	a, _ := m.lookup(m.byKey, k)
+	return a
 }
 
 // Has reports whether any binding in the map triggers a.
@@ -180,23 +220,41 @@ func (m Map) Conflicts() []Conflict {
 
 	var out []Conflict
 	for k, claims := range seen {
-		// Two claims conflict only if both can be live at the same moment:
-		// either one is global, or they target the same panel.
+		// Compared pairwise, not against the first claim.
+		//
+		// Comparing everything to claims[0] misses the case that matters most: a key
+		// claimed once in the sidebar and twice in the message list is not ambiguous
+		// because the sidebar's claim is in a different panel, but the two claims in
+		// the same panel are — and the first-claim comparison calls all three
+		// unambiguous. That is how ctrl+e was bound to both "edit message" and "scroll
+		// down" with a conflict check that reported nothing.
 		var live []Action
-		for _, a := range claims[:1] {
-			live = append(live, a.action)
-		}
-		for _, b := range claims[1:] {
-			if b.global || claims[0].global || b.panel == claims[0].panel {
-				live = append(live, b.action)
+		for a := range claims {
+			for _, y2 := range claims[a+1:] {
+				// The second claim comes from ranging over the sub-slice, so it is the
+				// value rather than an index. Taking an index here and using it against
+				// claims compares the first claim with itself, which passes the check
+				// vacuously — a conflict detector that can never report anything.
+				x, y := claims[a], y2
+				if x.action == y.action {
+					continue
+				}
+				// Two claims can be live at the same moment when either is global, or
+				// when they target the same panel.
+				if !x.global && !y.global && x.panel != y.panel {
+					continue
+				}
+				live = append(live, x.action, y.action)
 			}
 		}
-		if len(live) < 2 {
+		if len(live) == 0 {
 			continue
 		}
-		sort.Slice(live, func(i, j int) bool { return live[i] < live[j] })
-		out = append(out, Conflict{Key: k, Actions: live})
+
+		slices.Sort(live)
+		out = append(out, Conflict{Key: k, Actions: slices.Compact(live)})
 	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Key.String() < out[j].Key.String() })
 	return out
 }
@@ -228,7 +286,15 @@ func joinActions(actions []Action) string {
 type HelpEntry struct {
 	Action Action
 	Keys   []string
-	Help   string
+	// Help is the sentence the cheat sheet shows.
+	Help string
+	// Short is the one-word label the status bar shows.
+	//
+	// Two spellings of the same fact exist because the two surfaces have different
+	// budgets: the sheet has a scrollback and the bar has one line it shares with the
+	// connection state. Deriving the short form by truncating the sentence produces
+	// "Cancelar la ac…" on screen, which is worse than no hint at all.
+	Short  string
 	Panel  Panel
 	Global bool
 }
@@ -247,6 +313,7 @@ func (m Map) Help(focus Panel) []HelpEntry {
 			Action: b.Action,
 			Keys:   FormatKeys(b.Keys),
 			Help:   helpText(b),
+			Short:  b.Short,
 			Panel:  b.Panel,
 			Global: b.Global,
 		})
@@ -254,6 +321,69 @@ func (m Map) Help(focus Panel) []HelpEntry {
 	sort.Slice(out, func(i, j int) bool { return out[i].Action < out[j].Action })
 	return out
 }
+
+// Hints returns the status bar's key hints for a focus, in the order they are shown.
+//
+// The order is a declaration-order preference rather than alphabetical: a hint bar that
+// lists actions in the order of their identifier names is a bar nobody reads, because
+// the useful ones are not adjacent. Panel bindings come first, since they are the ones
+// that act on what is under the user's hands, and quit comes last because it is the
+// thing a user already knows.
+func (m Map) Hints(focus Panel) []HelpEntry {
+	entries := m.Help(focus)
+	rank := map[Action]int{}
+	order := append(slices.Clone(hintOrder[focus]), alwaysLast)
+	for i, a := range order {
+		rank[a] = i + 1
+	}
+
+	out := make([]HelpEntry, 0, len(entries))
+	for _, e := range entries {
+		// A hint with no short label is one the bar has nothing useful to say about:
+		// showing the key alone tells the user nothing they could not work out.
+		if strings.TrimSpace(e.Short) == "" || len(e.Keys) == 0 {
+			continue
+		}
+		out = append(out, e)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, oki := rank[out[i].Action]
+		rj, okj := rank[out[j].Action]
+		switch {
+		case oki && okj:
+			return ri < rj
+		case oki:
+			return true
+		case okj:
+			return false
+		default:
+			return false
+		}
+	})
+	return out
+}
+
+// hintOrder is the order the bar shows each panel's hints in.
+//
+// Only the actions worth a keystroke of attention are listed. A hint bar that tries to
+// mention every binding shows none of them: at a hundred columns there is room for three
+// short labels, and the three that matter are always the same.
+var hintOrder = map[Panel][]Action{
+	PanelSidebar: {
+		ChatOpen, ActionToggleRead, ActionToggleMute, ActionNewChat, ActionPalette,
+	},
+	PanelMessages: {
+		ActionReply, ActionReact, ActionCopy, ActionSelect, ActionInfo,
+	},
+	PanelComposer: {
+		SendMessage, InsertNewline, ActionPalette,
+	},
+}
+
+// alwaysLast is appended to every panel's order, so the bar ends the same way whatever
+// is focused: quitting is the one action a user already knows, so it belongs last.
+var alwaysLast = ActionQuit
 
 // helpText returns the binding's help label, humanising the action name when
 // no explicit label was supplied.
@@ -272,3 +402,9 @@ func humanise(s string) string {
 	}
 	return strings.ReplaceAll(prefix, "_", " ") + ": " + strings.ReplaceAll(rest, "_", " ")
 }
+
+// The pairwise comparison in [Map.Conflicts] is exercised directly by the tests with
+// three claims on one key, which is the shape the defaults did not have. The regression
+// it guards is subtle: a comparison that is subtly wrong in the direction of "no
+// conflict" is invisible, because a table with no real conflicts looks identical to a
+// checker that cannot find any.

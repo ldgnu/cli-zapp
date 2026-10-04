@@ -1,90 +1,88 @@
 package app
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/wterm/wterm/internal/models"
+	"github.com/wterm/wterm/internal/text"
+	"github.com/wterm/wterm/internal/ui/component"
 	"github.com/wterm/wterm/internal/ui/components/overlay"
 )
 
-// reactionShortcuts is the palette offered by the reaction picker.
+// reactionGlyphs is the palette offered by the reaction picker.
 //
-// A fixed palette rather than free emoji entry, because a picker needs to be
-// operable in a terminal and a full keyboard is far too slow.
-var reactionShortcuts = []string{"👍", "❤️", "😂", "😮", "😢", "🙏"}
+// A fixed set rather than free emoji entry, because a picker has to be operable in a
+// terminal and a full keyboard picker is far slower than just typing on a phone.
+var reactionGlyphs = []string{"👍", "❤️", "😂", "😮", "😢", "🙏"}
 
-// handleOverlayKey routes a key press to the topmost overlay.
+// --- key routing ---
+
+// onOverlayKey routes a key press to the topmost overlay.
 //
-// Overlays consume input before anything else does. A confirmation dialog that
-// let "mod+d" through to the conversation behind it would delete a message
-// while the user was trying to dismiss a prompt.
-func (m *Model) handleOverlayKey(top overlay.Overlay, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+// Overlays consume input before anything else does. A confirmation dialog that let
+// mod+d through to the conversation behind it would delete a message while the user was
+// trying to dismiss a prompt, which is the worst possible failure for a destructive
+// action.
+func (m *Model) onOverlayKey(top overlay.Overlay, msg tea.KeyPressMsg) tea.Cmd {
+	key := component.Named(msg)
 
-	// Modal buttons navigate horizontally; menus navigate vertically.
 	switch top.Kind {
 	case overlay.KindMenu:
+		// A menu is a list, so it navigates vertically. ctrl+j and ctrl+k are
+		// accepted alongside the arrows because a terminal user reaches for them.
 		switch key {
 		case "up", "ctrl+k":
 			m.moveOverlayCursor(-1)
-			return m, nil
 		case "down", "ctrl+j":
 			m.moveOverlayCursor(1)
-			return m, nil
 		case "esc", "q":
 			m.overlays.Pop()
-			return m, nil
 		case "enter":
 			return m.activateOverlay()
 		}
-		// Anything else is ignored rather than passed through.
-		return m, nil
+		return nil
 
 	case overlay.KindModal:
+		// A modal's buttons are a row, so it navigates horizontally. The letter
+		// shortcuts are accepted because "h"/"l" is the i3 idiom for the same thing
+		// and this interface follows it everywhere else.
 		switch key {
 		case "left", "right", "tab", "shift+tab", "h", "l":
 			m.moveModalCursor(1)
-			return m, nil
 		case "esc":
 			m.overlays.Pop()
-			return m, nil
 		case "enter":
 			return m.activateOverlay()
 		}
-		return m, nil
+		return nil
 
 	case overlay.KindToast:
-		// Toasts dismiss on any key, so a notification cannot trap the user.
+		// A toast dismisses on any key, so a notification can never trap the user.
 		m.overlays.Pop()
-		return m, nil
-
-	default:
-		return m, nil
+		return nil
 	}
+
+	return nil
 }
 
-// moveOverlayCursor moves a menu's selection, skipping separators and disabled
-// entries so that the cursor always lands somewhere actionable.
+// moveOverlayCursor moves a menu's selection.
 func (m *Model) moveOverlayCursor(delta int) {
 	top, ok := m.overlays.Top()
-	if !ok {
-		return
-	}
-	n := len(top.Items)
-	if n == 0 {
+	if !ok || len(top.Items) == 0 {
 		return
 	}
 
-	cursor := clamp(top.Cursor+delta, n-1)
-	for range n {
+	cursor := clamp(top.Cursor+delta, len(top.Items)-1)
+
+	// Skip separators and disabled entries, so the cursor always lands somewhere
+	// actionable. Without this, pressing enter on a separator looks like a dead key.
+	for range len(top.Items) {
 		if !top.Items[cursor].Separator && !top.Items[cursor].Disabled {
 			break
 		}
-		cursor = clamp(cursor+delta, n-1)
+		cursor = clamp(cursor+delta, len(top.Items)-1)
 	}
 
 	top.Cursor = cursor
@@ -101,376 +99,354 @@ func (m *Model) moveModalCursor(delta int) {
 	m.overlays.SetTop(top)
 }
 
-// activateOverlay runs the selected overlay action.
-func (m *Model) activateOverlay() (tea.Model, tea.Cmd) {
+// activateOverlay runs the selected overlay's action.
+func (m *Model) activateOverlay() tea.Cmd {
 	top, ok := m.overlays.Top()
 	if !ok {
-		return m, nil
+		return nil
 	}
 
 	switch top.Kind {
 	case overlay.KindMenu:
 		if top.Cursor < 0 || top.Cursor >= len(top.Items) {
-			return m, nil
+			return nil
 		}
 		item := top.Items[top.Cursor]
-		m.overlays.Pop()
-
-		if action, isDelete := deleteHandlers[menuActionID(top.Title, item.Label)]; isDelete {
-			return m, action(m)
+		if item.Separator || item.Disabled {
+			// The cursor cannot normally rest on one, but a mouse click or a
+			// shrinking menu can. Refusing is the safe answer.
+			return nil
 		}
-		return m, m.runMenuAction(top.Title, item.Label)
+		m.overlays.Pop()
+		return m.runMenuAction(top.Title, item.Label)
 
 	case overlay.KindModal:
 		if len(top.Buttons) == 0 {
 			m.overlays.Pop()
-			return m, nil
+			return nil
 		}
 		label := top.Buttons[top.Cursor].Label
 		m.overlays.Pop()
-		return m, m.runModalAction(top, label)
+		return m.runModalAction(top.Title, label)
 
-	default:
+	case overlay.KindToast:
 		m.overlays.Pop()
-		return m, nil
+		return nil
 	}
+
+	return nil
 }
 
-// deleteHandlers maps a menu entry to the command it runs.
+// runMenuAction dispatches a menu entry.
 //
-// The destructive actions are held separately from the label-dispatch in
-// [runMenuAction] so that a deletion is one obvious place in the code, which is
-// what makes the set of irreversible operations auditable.
-var deleteHandlers = map[string]func(*Model) tea.Cmd{
-	"delete-chat":    (*Model).deleteChatCmd,
-	"delete-message": (*Model).deleteMessageCmd,
-}
-
-// menuActionID builds the identifier for a menu entry.
-func menuActionID(title, label string) string {
-	switch {
-	case label == "Delete chat" && title == "Delete chat":
-		return "delete-chat"
-	case label == "Delete" && title == "Delete message":
-		return "delete-message"
-	default:
-		return ""
-	}
-}
-
-// runMenuAction dispatches a menu entry that is not a confirmed deletion.
-//
-// The switch is keyed on the menu title rather than the label, because a menu
-// titled "React" whose entries are all emoji has no other way to be identified.
+// It is keyed on the menu's title rather than the label, because a menu titled "React"
+// whose entries are all emoji has no other way to be identified, and keying on the
+// label would mean the dispatch depends on the translation of a user-visible string.
 func (m *Model) runMenuAction(title, label string) tea.Cmd {
 	switch title {
-	case "React":
-		return m.react(label)
+	case "Reaccionar":
+		return m.react(m.currentChatID(), m.transcript.CursorMessageID(), label)
 
-	case "Message":
+	case "Mensaje":
+		msg, _ := m.transcript.MessageAt(m.transcript.Cursor())
 		switch label {
-		case "Reply":
+		case "Responder":
 			return m.beginReply()
-		case "Edit":
+		case "Editar":
 			return m.beginEdit()
-		case "Download":
+		case "Descargar":
 			return m.downloadAttachment()
-		case "Open externally":
-			return m.openAttachment()
-		case "Copy":
-			return m.copySelected()
-		default:
-			return nil
+		case "Abrir":
+			return m.openAttachment(msg)
+		case "Copiar":
+			return m.copySelected(m.selectionOrCursor())
+		case "Eliminar":
+			// Deletion goes through a confirmation from the menu too, not only from
+			// the keyboard shortcut. Requiring the dialog on one path and not the
+			// other would make the menu a way to skip it, which is exactly the kind of
+			// inconsistency that makes people not trust a confirmation they have seen
+			// bypassed once.
+			return m.confirmDeleteMessage()
 		}
 
 	default:
 		return nil
 	}
-}
-
-// downloadAttachment fetches the cursor message's attachment.
-func (m *Model) downloadAttachment() tea.Cmd {
-	msg, ok := m.messageAt(m.msgSel)
-	if !ok || msg.Media == nil {
-		return m.toast("No attachment to download", false)
-	}
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-	svc := m.deps.Media
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		path, err := svc.Download(ctx, chat.ID, msg.ID)
-		if err != nil {
-			return errMsg{err: err}
-		}
-		m.overlays.Push(overlay.Toast("Saved to "+path, false))
-		return toastRaisedMsg{}
-	}
-}
-
-// openAttachment downloads if needed, then hands the file to the desktop.
-func (m *Model) openAttachment() tea.Cmd {
-	msg, ok := m.messageAt(m.msgSel)
-	if !ok || msg.Media == nil {
-		return m.toast("No attachment to open", false)
-	}
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-	svc := m.deps.Media
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-
-		path := msg.Media.LocalPath
-		if path == "" {
-			p, err := svc.Download(ctx, chat.ID, msg.ID)
-			if err != nil {
-				return errMsg{err: err}
-			}
-			path = p
-		}
-		if err := svc.Open(ctx, path); err != nil {
-			return errMsg{err: err}
-		}
-		return nil
-	}
+	return nil
 }
 
 // runModalAction dispatches a modal's button press.
-func (m *Model) runModalAction(top overlay.Overlay, label string) tea.Cmd {
-	switch top.Title {
-	case "Delete chat":
-		if label == "Confirm" {
-			return m.deleteChatCmd()
-		}
-	case "Delete message":
-		if label == "Confirm" {
-			return m.deleteMessageCmd()
+//
+// The destructive handlers are held in one table rather than inline in the switch,
+// so that the complete set of irreversible operations is readable in one place. That
+// is what makes the list auditable when someone asks "what can this program destroy?"
+// — which is the question a reviewer should never have to grep for.
+var destructiveButtons = map[string]map[string]func(*Model) tea.Cmd{
+	"Eliminar conversación": {"Confirmar": (*Model).doDeleteChat},
+	"Eliminar mensaje":      {"Confirmar": (*Model).doDeleteMessage},
+}
+
+func (m *Model) runModalAction(title, label string) tea.Cmd {
+	if byLabel, ok := destructiveButtons[title]; ok {
+		if fn, ok := byLabel[label]; ok {
+			return fn(m)
 		}
 	}
 	return nil
 }
 
-// deleteMessageCmd revokes the selected message.
-func (m *Model) deleteMessageCmd() tea.Cmd {
-	msg, ok := m.messageAt(m.msgSel)
-	if !ok {
-		return nil
-	}
+// --- overlay actions ---
+
+// confirmDeleteChat asks before deleting the open conversation.
+func (m *Model) confirmDeleteChat() tea.Cmd {
 	chat, ok := m.currentChat()
 	if !ok {
 		return nil
-	}
-	svc := m.deps.Message
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := svc.Delete(ctx, chat.ID, msg.ID); err != nil {
-			return errMsg{err: err}
-		}
-		return messagesLoadedMsg{chat: chat.ID}
-	}
-}
-
-// confirmDeleteChat opens the deletion confirmation for the selected chat.
-func (m *Model) confirmDeleteChat() *Model {
-	chat, ok := m.currentChat()
-	if !ok {
-		return m
 	}
 	m.overlays.Push(overlay.Confirm(
-		"Delete chat",
-		"Delete the conversation with "+chat.FallbackName()+
-			"? Messages will be removed from this device.",
+		"Eliminar conversación",
+		"Se eliminará la conversación con "+chat.FallbackName()+
+			" y sus mensajes en este dispositivo. No se puede deshacer.",
 	))
-	return m
+	return nil
 }
 
-// confirmDeleteMessage opens the deletion confirmation for the cursor message.
-func (m *Model) confirmDeleteMessage() *Model {
-	msg, ok := m.messageAt(m.msgSel)
+// confirmDeleteMessage asks before revoking the cursor message.
+func (m *Model) confirmDeleteMessage() tea.Cmd {
+	msg, ok := m.transcript.MessageAt(m.transcript.Cursor())
 	if !ok || msg.Revoked {
-		return m
+		return nil
 	}
 	m.overlays.Push(overlay.Confirm(
-		"Delete message",
-		"This message will be deleted for everyone in the conversation.",
+		"Eliminar mensaje",
+		"Este mensaje se eliminará para todos en la conversación.",
 	))
-	return m
+	return nil
 }
 
-// openReactionPicker opens the reaction palette.
-func (m *Model) openReactionPicker() *Model {
-	if _, ok := m.messageAt(m.msgSel); !ok {
-		return m
-	}
-	items := make([]overlay.MenuItem, 0, len(reactionShortcuts))
-	for _, r := range reactionShortcuts {
-		items = append(items, overlay.MenuItem{Label: r})
-	}
-	m.overlays.Push(overlay.Menu("React", items, 0))
-	return m
-}
-
-// openMessageMenu opens the right-click context menu for the cursor message.
-//
-// Which entries appear depends on the message: only the user's own messages can
-// be edited or deleted-for-everyone, so offering those for a received message
-// would promise something the protocol will refuse.
-func (m *Model) openMessageMenu() *Model {
-	msg, ok := m.messageAt(m.msgSel)
+// doDeleteChat carries out a confirmed conversation deletion.
+func (m *Model) doDeleteChat() tea.Cmd {
+	chat, ok := m.currentChat()
 	if !ok {
-		return m
+		return nil
+	}
+	// The cached transcript belonged to the conversation that just went away; keeping
+	// it would render another conversation's messages under this one's header.
+	m.opened = ""
+	m.messages = nil
+	m.syncTranscript()
+	return m.deleteChat(chat.ID)
+}
+
+// doDeleteMessage carries out a confirmed revocation.
+func (m *Model) doDeleteMessage() tea.Cmd {
+	chat, ok := m.currentChat()
+	if !ok {
+		return nil
+	}
+	return m.revoke(chat.ID, m.transcript.CursorMessageID())
+}
+
+// openReactionPicker opens the fixed reaction palette.
+func (m *Model) openReactionPicker() tea.Cmd {
+	if _, ok := m.transcript.MessageAt(m.transcript.Cursor()); !ok {
+		return nil
+	}
+	items := make([]overlay.MenuItem, 0, len(reactionGlyphs))
+	for _, g := range reactionGlyphs {
+		items = append(items, overlay.MenuItem{Label: g})
+	}
+	m.overlays.Push(overlay.Menu("Reaccionar", items, 0))
+	return nil
+}
+
+// openMessageMenu opens the context menu for the cursor message.
+//
+// Which entries appear depends on the message: only the account's own messages can be
+// edited or deleted for everyone, so offering those for a received message would
+// promise something the protocol will refuse.
+func (m *Model) openMessageMenu() tea.Cmd {
+	msg, ok := m.transcript.MessageAt(m.transcript.Cursor())
+	if !ok {
+		return nil
 	}
 
 	items := []overlay.MenuItem{
-		{Label: "Reply", Hint: "r"},
-		{Label: "React", Hint: "R"},
+		{Label: "Responder", Hint: "r"},
+		{Label: "Reaccionar", Hint: "R"},
 	}
 	if msg.Media != nil {
 		items = append(items,
-			overlay.MenuItem{Label: "Download", Hint: "mod+s"},
-			overlay.MenuItem{Label: "Open externally", Hint: "mod+o"},
+			overlay.MenuItem{Label: "Descargar", Hint: "mod+s"},
+			overlay.MenuItem{Label: "Abrir", Hint: "mod+o"},
 		)
 	}
-	items = append(items, overlay.MenuItem{Label: "Copy", Hint: "mod+c"},
-		overlay.Separator(),
-	)
+	items = append(items, overlay.MenuItem{Label: "Copiar", Hint: "mod+c"}, overlay.Separator())
 
 	if msg.IsOutgoing() && !msg.Revoked {
-		items = append(items, overlay.MenuItem{Label: "Edit", Hint: "mod+e"})
+		items = append(items, overlay.MenuItem{Label: "Editar", Hint: "mod+e"})
 	}
 	if !msg.Revoked {
 		items = append(items,
-			overlay.MenuItem{Label: "Delete", Hint: "mod+d", Danger: true})
+			overlay.MenuItem{Label: "Eliminar", Hint: "mod+d", Danger: true})
 	}
 
-	m.overlays.Push(overlay.Menu("Message", items, 0))
-	return m
+	m.overlays.Push(overlay.Menu("Mensaje", items, 0))
+	return nil
 }
 
-// openNewChat opens a menu of candidate chats to start.
-func (m *Model) openNewChat() tea.Cmd {
-	return m.listChats()
-}
-
-// openInfo shows the contact or group information.
-func (m *Model) openInfo() *Model {
+// downloadAttachment fetches the cursor message's attachment.
+func (m *Model) downloadAttachment() tea.Cmd {
+	msg, ok := m.transcript.MessageAt(m.transcript.Cursor())
+	if !ok || msg.Media == nil {
+		return m.toast("no hay ningún archivoadjunto", false)
+	}
 	chat, ok := m.currentChat()
 	if !ok {
-		return m
+		return nil
 	}
-
-	lines := []string{"Type: " + chat.Type.String()}
-	if chat.Type.IsGroup() {
-		lines = append(lines, "Members: see group roster")
-	}
-	if chat.Contact != nil {
-		c := chat.Contact
-		lines = append(lines, "Phone: "+orDash(c.Phone))
-		lines = append(lines, "About: "+orDash(c.About))
-		if p := c.Presence.Label(); p != "" {
-			lines = append(lines, "Presence: "+p)
-		}
-	}
-
-	m.overlays.Push(overlay.Info("Chat info", lines))
-	return m
+	return m.download(chat.ID, msg.ID)
 }
 
-// openHelp opens the keybinding cheat sheet.
-func (m *Model) openHelp() *Model {
-	entries := m.keys.Help(m.focus)
+// openAttachment hands the cursor message's attachment to the desktop.
+func (m *Model) openAttachment(msg models.Message) tea.Cmd {
+	if msg.Media == nil {
+		return m.toast("no hay ningún archivo adjunto", false)
+	}
+	chat, ok := m.currentChat()
+	if !ok {
+		return nil
+	}
+	return m.openInDesktop(chat.ID, msg)
+}
 
-	// Group by the action's prefix so the sheet is navigable rather than a wall.
-	var sections []string
+// openInfo shows the conversation's metadata.
+func (m *Model) openInfo() tea.Cmd {
+	chat, ok := m.currentChat()
+	if !ok {
+		return m.toast("no hay ninguna conversación abierta", false)
+	}
+
+	lines := []string{"Tipo: " + chat.Type.String()}
+	if chat.Contact != nil {
+		c := chat.Contact
+		lines = append(lines,
+			"Teléfono: "+orDash(c.Phone),
+			"Nota: "+orDash(c.About),
+		)
+		if p := c.Presence.Label(); p != "" {
+			lines = append(lines, "Presencia: "+p)
+		}
+		if c.Verified {
+			lines = append(lines, "Verificado")
+		}
+	}
+	if chat.Type.IsGroup() {
+		lines = append(lines, "Miembros: "+text.Itoa(m.groupSize(chat)))
+	}
+	lines = append(lines,
+		"Pinzado: "+yesNo(chat.Pinned),
+		"Silenciado: "+yesNo(chat.Muted),
+		"Archivado: "+yesNo(chat.Archived),
+	)
+
+	m.overlays.Push(overlay.Info("Información", lines))
+	return nil
+}
+
+// groupSize returns a group's member count, or zero when it is unknown.
+func (m *Model) groupSize(chat models.Chat) int {
+	if m.services.Group == nil {
+		return 0
+	}
+	g, err := m.services.Group.Get(m.ctx(), chat.ID)
+	if err != nil {
+		return 0
+	}
+	return len(g.Participants)
+}
+
+// openHelp shows the keybinding cheat sheet.
+//
+// It is grouped by the action's prefix so the sheet is navigable rather than a wall of
+// forty lines, and it is scoped to the focused panel so it shows the keys that work
+// where the user is standing rather than every key in the application.
+func (m *Model) openHelp() tea.Cmd {
+	entries := m.keys.Help(m.focusPanel())
+
 	seen := make(map[string]bool)
+	var lines []string
 	for _, e := range entries {
-		section := cutAction(string(e.Action))
+		section := actionSection(string(e.Action))
 		if seen[section] {
 			continue
 		}
 		seen[section] = true
 
-		sections = append(sections, strings.ToUpper(section))
+		lines = append(lines, strings.ToUpper(section))
 		for _, other := range entries {
-			if s := cutAction(string(other.Action)); s != section {
+			if actionSection(string(other.Action)) != section {
 				continue
 			}
-			key := ""
+			k := ""
 			if len(other.Keys) > 0 {
-				key = other.Keys[0]
+				k = other.Keys[0]
 			}
-			sections = append(sections, "  "+padKey(key)+"  "+other.Help)
+			lines = append(lines, "  "+padKey(k)+"  "+other.Help)
 		}
 	}
 
-	m.overlays.Push(overlay.Info("Keybindings", sections))
-	return m
+	m.overlays.Push(overlay.Info("Atajos de teclado", lines))
+	return nil
 }
 
-// toast pushes a transient notification and schedules its expiry.
+// openNewChat opens a conversation picker.
 //
-// The command is returned rather than run, so that the timer is registered with
-// Bubble Tea's loop: a raw time.After would fire on a goroutine nothing is
-// listening to.
-func (m *Model) toast(msg string, isError bool) tea.Cmd {
-	o := overlay.Toast(msg, isError)
-	m.overlays.Push(o)
-	return m.scheduleExpiry(o.ExpiresAt)
-}
+// Starting a chat needs a destination, and there is no destination to infer: unlike a
+// web client there is no URL bar to paste a number into. The palette already lists
+// every conversation, so it is reused rather than a second picker being written.
+func (m *Model) openNewChat() tea.Cmd { return m.palette.Open("") }
 
-// orDash returns s, or an em dash when empty, for info panels.
-func orDash(s string) string {
-	if s == "" {
-		return "—"
+// actionSection returns the part of an action before the dot, e.g. "chat" for
+// "chat.toggle_mute". An action with no dot is its own section.
+func actionSection(a string) string {
+	if i := strings.IndexByte(a, '.'); i >= 0 {
+		return a[:i]
 	}
-	return s
+	return a
 }
 
-// padKey right-pads a key label to a fixed width for the help sheet.
+// padKey right-pads a key label to a fixed width, for the help sheet.
 func padKey(k string) string {
 	const width = 12
 	if len(k) >= width {
 		return k
 	}
-	return k + spaces(width-len(k))
+	return k + strings.Repeat(" ", width-len(k))
 }
 
-func spaces(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = ' '
+// yesNo renders a boolean as Spanish prose.
+func yesNo(b bool) string {
+	if b {
+		return "sí"
 	}
-	return string(b)
+	return "no"
 }
 
-// cutAction returns the section part of an action name, e.g. "chat" for
-// "chat.toggle_mute". An action with no dot is its own section.
-func cutAction(a string) string {
-	for i := range len(a) {
-		if a[i] == '.' {
-			return a[:i]
-		}
+// clamp limits v to [0, hi].
+//
+// The lower bound of zero rather than -1 is what every call site needs: an index is
+// never meaningfully negative once clamped, and the empty-list case is handled
+// explicitly by refusing to index at all.
+func clamp(v, hi int) int {
+	if hi < 0 {
+		return 0
 	}
-	return a
-}
-
-// currentChatID returns the open chat's identifier, empty when none is open.
-func (m *Model) currentChatID() models.ChatID {
-	chat, ok := m.currentChat()
-	if !ok {
-		return ""
+	if v < 0 {
+		return 0
 	}
-	return chat.ID
+	if v > hi {
+		return hi
+	}
+	return v
 }

@@ -19,6 +19,7 @@ type Styles struct {
 	SidebarHead  lipgloss.Style
 	SearchBox    lipgloss.Style
 	SearchPrompt lipgloss.Style
+	Brand        lipgloss.Style
 
 	// Chat list rows.
 	ChatRow         lipgloss.Style
@@ -33,6 +34,7 @@ type Styles struct {
 	Header          lipgloss.Style
 	HeaderTitle     lipgloss.Style
 	HeaderSubtitle  lipgloss.Style
+	HeaderRule      lipgloss.Style
 	PresenceOnline  lipgloss.Style
 	PresenceOffline lipgloss.Style
 
@@ -50,9 +52,16 @@ type Styles struct {
 	SearchHit    lipgloss.Style
 
 	// Input.
-	Composer        lipgloss.Style
+	Composer       lipgloss.Style
+	Palette        lipgloss.Style
+	PalettePrompt  lipgloss.Style
+	PaletteItem    lipgloss.Style
+	PaletteCursor  lipgloss.Style
+	PaletteSection lipgloss.Style
+
 	ComposerFocused lipgloss.Style
 	ComposerHint    lipgloss.Style
+	ComposerPrompt  lipgloss.Style
 
 	// Chrome.
 	StatusBar   lipgloss.Style
@@ -107,6 +116,7 @@ func buildStyles(t Theme) Styles {
 		SearchBox: fg(p.Foreground).
 			Border(lipgloss.RoundedBorder()).BorderForeground(p.Border).Padding(0, 1),
 		SearchPrompt: fg(p.Accent).Bold(true),
+		Brand:        fg(p.Accent).Bold(true),
 
 		// No horizontal padding: the component pads its own content to the pane
 		// width, and padding applied here lands after that, making every row two
@@ -124,8 +134,9 @@ func buildStyles(t Theme) Styles {
 
 		Header: lipgloss.NewStyle().
 			Background(p.HeaderBackground).Foreground(p.HeaderForeground).Height(m.HeaderHeight),
-		HeaderTitle:     fg(p.HeaderForeground).Bold(true).PaddingLeft(1),
-		HeaderSubtitle:  fg(p.Muted).PaddingLeft(1),
+		HeaderTitle:     fg(p.HeaderForeground).Bold(true),
+		HeaderSubtitle:  fg(p.Muted),
+		HeaderRule:      fg(p.Border),
 		PresenceOnline:  fg(p.Online),
 		PresenceOffline: fg(p.Offline),
 
@@ -144,7 +155,8 @@ func buildStyles(t Theme) Styles {
 		Composer: lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(p.Border),
 		ComposerFocused: lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).BorderForeground(p.BorderFocus),
-		ComposerHint: fg(p.Faint),
+		ComposerHint:   fg(p.Faint),
+		ComposerPrompt: fg(p.Accent).Bold(true),
 
 		StatusBar:   fg(p.StatusBarFG),
 		StatusKey:   fg(p.Accent).Bold(true),

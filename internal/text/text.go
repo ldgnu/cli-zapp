@@ -103,12 +103,28 @@ func PadRightStyled(s string, width int) string {
 	return s + strings.Repeat(" ", pad)
 }
 
-// Width returns the number of terminal cells s occupies, counting escape
-// sequences as visible.
+// Width returns the number of terminal cells s occupies.
 //
-// For plain text this is the right measure. For styled text use [VisibleWidth],
-// which ignores the escapes.
+// # Escape sequences occupy no cells
+//
+// Width ignores ANSI escapes, exactly as the terminal does. The alternative —
+// counting them — is defensible only for a string that is known to be unstyled, and
+// that knowledge is not available at the call site: a helper that pads a rendered
+// fragment cannot tell whether its argument came from a style or from a literal, and
+// guessing wrong produces a frame that is several cells too wide, which the terminal
+// then wraps.
+//
+// [RawWidth] is available for the rare case where the escaped length is genuinely
+// wanted, such as measuring a buffer.
 func Width(s string) int {
+	return uniseg.StringWidth(StripANSI(s))
+}
+
+// RawWidth returns the length of s including its escape sequences.
+//
+// It exists so that the distinction is a deliberate choice at a call site rather than
+// an accident of which function a helper happened to call.
+func RawWidth(s string) int {
 	return uniseg.StringWidth(s)
 }
 
@@ -169,6 +185,8 @@ func PadRight(s string, width int) string {
 }
 
 // PadLeft prefixes s with spaces to exactly width cells.
+//
+// It is escape-aware, so it is safe to call on a rendered fragment.
 func PadLeft(s string, width int) string {
 	pad := width - Width(s)
 	if pad <= 0 {
@@ -276,9 +294,11 @@ func hardWrap(s string, width int) []string {
 // Components that join independently styled segments use this to align columns;
 // without it every escape sequence would count toward the width and no two columns
 // would line up.
-func VisibleWidth(s string) int {
-	return Width(StripANSI(s))
-}
+// VisibleWidth is the width s occupies on screen.
+//
+// It is an alias for [Width], kept because "visible width" says what a caller means at
+// a layout site and "width" alone does not.
+func VisibleWidth(s string) int { return Width(s) }
 
 // Sanitize makes s safe to render in a terminal, preserving newlines and tabs.
 //

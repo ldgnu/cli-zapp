@@ -799,6 +799,55 @@ func (f *Fake) Receive(chatID models.ChatID, sender models.ContactID, body strin
 	return m
 }
 
+// Speak records an outgoing message from the account itself.
+//
+// It is separate from [Fake.Receive] because the two are not symmetric: an outgoing
+// message has a delivery state, an error field and the possibility of being edited, and
+// a fixture that could not produce one would leave half the transcript's rendering —
+// right alignment, the delivery marks, the failed-send treatment — unreachable from the
+// demo data.
+func (f *Fake) Speak(chatID models.ChatID, body string) models.Message {
+	f.mu.Lock()
+	f.nextID++
+	m := models.Message{
+		ID:        models.MessageID(fmt.Sprintf("wterm-fake-out-%06d", f.nextID)),
+		ChatID:    chatID,
+		SenderID:  f.self.ID,
+		Direction: models.DirectionOutgoing,
+		Kind:      models.KindText,
+		Body:      body,
+		Timestamp: time.Now(),
+		Status:    models.DeliveryRead,
+	}
+	f.appendMessageLocked(m)
+	f.mu.Unlock()
+
+	f.emit(Event{Kind: EventMessage, ChatID: chatID, Message: m})
+	return m
+}
+
+// Fail records an outgoing message that could not be delivered.
+//
+// It exists so the failed-send rendering is visible in the demo rather than only in a
+// test. A client that has never shown the user what a failed send looks like is a client
+// whose first failed send will surprise them.
+func (f *Fake) Fail(chatID models.ChatID, body string) models.Message {
+	m := f.Speak(chatID, body)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for i, existing := range f.messages[chatID] {
+		if existing.ID != m.ID {
+			continue
+		}
+		existing.Status = models.DeliveryFailed
+		existing.SendError = "sin conexión"
+		f.messages[chatID][i] = existing
+		break
+	}
+	return m
+}
+
 // SetPresence updates a contact's availability and emits the events a UI needs
 // to update both the presence dot and the chat row.
 func (f *Fake) SetPresence(id models.ContactID, state models.PresenceState) {

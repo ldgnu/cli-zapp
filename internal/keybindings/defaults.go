@@ -26,100 +26,121 @@ func Defaults() []Binding {
 		// Global.
 		{
 			Action: ActionQuit, Global: true,
-			Keys: []Key{key("mod+q")}, Help: "Quit, or close the top overlay",
+			Keys: []Key{key("mod+q")}, Help: "Salir, o cerrar el diálogo abierto",
+			Short: "salir",
 		},
 		{
 			Action: ActionCancel, Global: true,
-			Keys: []Key{key(KeyEscape)}, Help: "Cancel the current action",
+			Keys: []Key{key(KeyEscape)}, Help: "Cancelar la acción actual",
 		},
 		{
 			Action: ActionSearch, Global: true,
-			Keys: []Key{key("mod+f")}, Help: "Search chats and messages",
+			Keys: []Key{key("mod+f")}, Help: "Buscar conversaciones y mensajes",
+			Short: "buscar",
 		},
 		{
 			Action: ActionSync, Global: true,
-			Keys: []Key{key("mod+r")}, Help: "Reconnect and resynchronise",
+			Keys: []Key{key("mod+r")}, Help: "Reconectar y sincronizar",
 		},
 		{
 			Action: ActionNewChat, Global: true,
-			Keys: []Key{key("mod+n")}, Help: "Start a new chat",
+			Keys: []Key{key("mod+n")}, Help: "Abrir el menú de conversaciones",
+			Short: "chats",
 		},
 		{
 			Action: ActionInfo, Global: true,
-			Keys: []Key{key("mod+g")}, Help: "Contact or group information",
+			Keys: []Key{key("mod+g")}, Help: "Información del contacto o del grupo",
+			Short: "info",
 		},
 		{
 			Action: ActionHelp, Global: true,
-			Keys: []Key{key("mod+?")}, Help: "Show this help",
+			Keys: []Key{key("mod+?")}, Help: "Mostrar esta ayuda",
+			Short: "ayuda",
 		},
 		{
 			// mod+enter is the primary action, per the i3wm convention where
 			// "enter" is bound to the focused container's default action.
 			Action: ActionConfirm, Global: true,
-			Keys: []Key{key("mod+enter")}, Help: "Primary action for the focused panel",
+			Keys: []Key{key("mod+enter")}, Help: "Acción principal del panel enfocado",
+		},
+		{
+			// mod+p rather than mod+k. mod+k is "up" in the i3/vim dialect this
+			// interface follows, and that convention has priority here: a key
+			// that means one thing in every other pane of a keyboard-driven
+			// application must not mean another thing in one of them. mod+p is
+			// the other established spelling for a command palette, so nothing
+			// is lost by choosing it.
+			Action: ActionPalette, Global: true,
+			Keys: []Key{key("mod+shift+p")}, Help: "Abrir la paleta de comandos",
+			Short: "comandos",
 		},
 		{
 			Action: ActionSelectAll, Global: true,
-			Keys: []Key{key("mod+a")}, Help: "Select all messages",
+			Keys: []Key{key("mod+a")}, Help: "Seleccionar todos los mensajes",
+			Short: "todo",
 		},
 		{
 			// Tab / Shift+Tab switch panels. They are bound globally because a
 			// panel switch is meaningful from anywhere, and are also listed as
 			// navigation below so the help groups them sensibly.
 			Action: PanelNext, Global: true,
-			Keys: []Key{key(KeyTab)}, Help: "Focus the next panel",
+			Keys: []Key{key(KeyTab)}, Help: "Ir al panel siguiente",
 		},
 		{
 			Action: PanelPrev, Global: true,
-			Keys: []Key{key("shift+" + KeyTab)}, Help: "Focus the previous panel",
+			Keys: []Key{key("shift+" + KeyTab)}, Help: "Ir al panel anterior",
 		},
 
 		// Sidebar.
 		{
 			Action: NavUp, Panel: PanelSidebar,
 			Keys: []Key{key("mod+k"), key(KeyUp)},
-			Help: "Previous chat",
+			Help: "Chat anterior",
 		},
 		{
 			Action: NavDown, Panel: PanelSidebar,
 			Keys: []Key{key("mod+j"), key(KeyDown)},
-			Help: "Next chat",
+			Help: "Chat siguiente",
 		},
 		{
 			Action: ChatOpen, Panel: PanelSidebar,
-			Keys: []Key{key(KeyEnter)}, Help: "Open the selected chat",
+			Keys: []Key{key(KeyEnter)}, Help: "Abrir la conversación seleccionada",
+			Short: "abrir",
 		},
 		{
 			Action: ActionToggleRead, Panel: PanelSidebar,
-			Keys: []Key{key("mod+u")}, Help: "Mark the chat read or unread",
+			Keys: []Key{key("mod+u")}, Help: "Marcar la conversación como leída o no leída",
+			Short: "leída",
 		},
 		{
 			Action: ActionTogglePin, Panel: PanelSidebar,
-			Keys: []Key{key("mod+p")}, Help: "Pin or unpin the chat",
+			Keys: []Key{key("mod+p")}, Help: "Anclar o desanclar la conversación",
+			Short: "anclar",
 		},
 		{
 			Action: ActionToggleMute, Panel: PanelSidebar,
-			Keys: []Key{key("mod+m")}, Help: "Mute or unmute the chat",
+			Keys: []Key{key("mod+m")}, Help: "Silenciar o quitar el silencio",
+			Short: "silenciar",
 		},
 		{
 			Action: ActionToggleArchive, Panel: PanelSidebar,
-			Keys: []Key{key("mod+e")}, Help: "Archive or unarchive the chat",
+			Keys: []Key{key("mod+e")}, Help: "Archivar o desarchivar la conversación",
 		},
 		{
 			Action: ActionDeleteChat, Panel: PanelSidebar,
-			Keys: []Key{key("mod+backspace")}, Help: "Delete the chat",
+			Keys: []Key{key("mod+backspace")}, Help: "Eliminar la conversación",
 		},
 
 		// Message list.
 		{
 			Action: NavUp, Panel: PanelMessages,
 			Keys: []Key{key("mod+k"), key(KeyUp)},
-			Help: "Previous message",
+			Help: "Mensaje anterior",
 		},
 		{
 			Action: NavDown, Panel: PanelMessages,
 			Keys: []Key{key("mod+j"), key(KeyDown)},
-			Help: "Next message",
+			Help: "Mensaje siguiente",
 		},
 		{
 			// Panel focus is bound globally rather than per panel. The point of an
@@ -128,81 +149,86 @@ func Defaults() []Binding {
 			// doing nothing from the composer, which is where typing usually happens.
 			Action: NavLeft, Global: true,
 			Keys: []Key{key("mod+h")},
-			Help: "Focus the sidebar",
+			Help: "Ir a la lista de conversaciones",
 		},
 		{
 			Action: NavRight, Global: true,
 			Keys: []Key{key("mod+l")},
-			Help: "Focus the composer",
+			Help: "Ir al campo de escritura",
 		},
 		{
-			// A bare page key scrolls a page, and ctrl+b / alt+pgup is the
-			// dedicated "page" action. Both are offered because a user who
-			// thinks of PageUp as a page should not have to discover the
-			// distinction.
+			// A bare page key scrolls a page, and ctrl+b / alt+pgup is the dedicated
+			// "page" action. Both are offered because a user who thinks of PageUp as
+			// a page should not have to discover the distinction.
 			Action: ScrollUp, Panel: PanelMessages,
 			Keys: []Key{key("k"), key("ctrl+u"), key(KeyPageUp), key("shift+" + KeyUp)},
-			Help: "Scroll up",
+			Help: "Desplazar hacia arriba",
 		},
 		{
-			// ctrl+d is reserved for deleting the selected message, so
-			// half-page scrolling uses ctrl+y / ctrl+e, the pair a
-			// terminal-emulator user already has in their fingers.
+			// Half-page scrolling is ctrl+u / ctrl+y. The symmetric ctrl+d and ctrl+e
+			// pair would be the obvious choice, but ctrl+d deletes the selected message
+			// and ctrl+e edits it — both bound in this same panel, where a global is not
+			// involved and the two would simply shadow each other. ctrl+y is the pair a
+			// terminal user already has in their fingers for the other direction.
 			Action: ScrollDown, Panel: PanelMessages,
-			Keys: []Key{key("j"), key("ctrl+e"), key(KeyPageDown), key("shift+" + KeyDown)},
-			Help: "Scroll down",
+			Keys: []Key{key("j"), key("ctrl+y"), key(KeyPageDown), key("shift+" + KeyDown)},
+			Help: "Desplazar hacia abajo",
 		},
 		{
 			Action: ScrollTop, Panel: PanelMessages,
-			Keys: []Key{key("ctrl+home"), key("g")}, Help: "Jump to the oldest message",
+			Keys: []Key{key("ctrl+home"), key("g")}, Help: "Ir al mensaje más antiguo",
 		},
 		{
 			Action: ScrollBottom, Panel: PanelMessages,
-			Keys: []Key{key("ctrl+end"), key("G")}, Help: "Jump to the newest message",
+			Keys: []Key{key("ctrl+end"), key("G")}, Help: "Ir al mensaje más reciente",
 		},
 		{
 			Action: PageUp, Panel: PanelMessages,
-			Keys: []Key{key("ctrl+b"), key("alt+" + KeyPageUp)}, Help: "Scroll up one page",
+			Keys: []Key{key("ctrl+b"), key("alt+" + KeyPageUp)}, Help: "Desplazar hacia arriba una página",
 		},
 		{
 			Action: PageDown, Panel: PanelMessages,
-			Keys: []Key{key("alt+" + KeyPageDown)}, Help: "Scroll down one page",
+			Keys: []Key{key("alt+" + KeyPageDown)}, Help: "Desplazar hacia abajo una página",
 		},
 		{
 			Action: ActionReply, Panel: PanelMessages,
-			Keys: []Key{key("r")}, Help: "Reply to the selected message",
+			Keys: []Key{key("r")}, Help: "Responder al mensaje seleccionado",
+			Short: "responder",
 		},
 		{
 			Action: ActionEdit, Panel: PanelMessages,
-			Keys: []Key{key("mod+e")}, Help: "Edit the selected message",
+			Keys: []Key{key("mod+e")}, Help: "Editar el mensaje seleccionado",
 		},
 		{
 			Action: ActionDelete, Panel: PanelMessages,
-			Keys: []Key{key("mod+d")}, Help: "Delete the selected message",
+			Keys: []Key{key("mod+d")}, Help: "Eliminar el mensaje seleccionado",
 		},
 		{
 			Action: ActionReact, Panel: PanelMessages,
-			Keys: []Key{key("R")}, Help: "React to the selected message",
+			Keys: []Key{key("R")}, Help: "Reaccionar al mensaje seleccionado",
+			Short: "reaccionar",
 		},
 		{
 			Action: ActionForward, Panel: PanelMessages,
-			Keys: []Key{key("mod+shift+f")}, Help: "Forward the selected message",
+			Keys: []Key{key("mod+shift+f")}, Help: "Reenviar el mensaje seleccionado",
 		},
 		{
 			Action: ActionCopy, Panel: PanelMessages,
-			Keys: []Key{key("mod+c")}, Help: "Copy the selected message",
+			Keys: []Key{key("mod+c")}, Help: "Copiar el mensaje seleccionado",
+			Short: "copiar",
 		},
 		{
 			Action: ActionSelect, Panel: PanelMessages,
-			Keys: []Key{key("space")}, Help: "Select or deselect the message",
+			Keys: []Key{key("space")}, Help: "Seleccionar o deseleccionar el mensaje",
+			Short: "seleccionar",
 		},
 		{
 			Action: ActionDownload, Panel: PanelMessages,
-			Keys: []Key{key("mod+s")}, Help: "Download the message attachment",
+			Keys: []Key{key("mod+s")}, Help: "Descargar el adjunto del mensaje",
 		},
 		{
 			Action: ActionOpen, Panel: PanelMessages,
-			Keys: []Key{key("mod+o")}, Help: "Open the attachment externally",
+			Keys: []Key{key("mod+o")}, Help: "Abrir el adjunto fuera del terminal",
 		},
 
 		// Composer.
@@ -212,28 +238,30 @@ func Defaults() []Binding {
 			// moving the caret in multi-line text.
 			Action: NavUp, Panel: PanelComposer,
 			Keys: []Key{key("alt+" + KeyUp)},
-			Help: "Previous chat",
+			Help: "Chat anterior",
 		},
 		{
 			Action: NavDown, Panel: PanelComposer,
 			Keys: []Key{key("alt+" + KeyDown)},
-			Help: "Next chat",
+			Help: "Chat siguiente",
 		},
 		{
 			Action: ScrollUp, Panel: PanelComposer,
-			Keys: []Key{key("alt+k"), key("alt+" + KeyPageUp)}, Help: "Scroll up",
+			Keys: []Key{key("alt+k"), key("alt+" + KeyPageUp)}, Help: "Desplazar hacia arriba",
 		},
 		{
 			Action: ScrollDown, Panel: PanelComposer,
-			Keys: []Key{key("alt+j"), key("alt+" + KeyPageDown)}, Help: "Scroll down",
+			Keys: []Key{key("alt+j"), key("alt+" + KeyPageDown)}, Help: "Desplazar hacia abajo",
 		},
 		{
 			Action: SendMessage, Panel: PanelComposer,
-			Keys: []Key{key(KeyEnter)}, Help: "Send the message",
+			Keys: []Key{key(KeyEnter)}, Help: "Enviar el mensaje",
+			Short: "enviar",
 		},
 		{
 			Action: InsertNewline, Panel: PanelComposer,
-			Keys: []Key{key("alt+enter"), key("shift+enter")}, Help: "Insert a newline",
+			Keys: []Key{key("alt+enter"), key("shift+enter")}, Help: "Insertar un salto de línea",
+			Short: "nueva línea",
 		},
 	}
 }

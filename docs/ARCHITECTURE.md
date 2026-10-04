@@ -1,17 +1,28 @@
 # Architecture
 
 Why the code is arranged the way it is. The short version: the protocol is
-unofficial and unstable, so it is confined to one directory, and everything above
-that directory is testable without it.
+unofficial and unstable, so it is confined to one directory; the interface is
+built out of regions that own their own state; and everything above that
+directory is testable without either.
+
+See [UX.md](UX.md) for the interface decisions and their reasoning, and
+[LIMITATIONS.md](LIMITATIONS.md) for what the protocol does not support.
 
 ## The dependency rule
 
 ```
 cmd/wterm                composition root: flags, theme, services, wiring
 
+scripts/                 development tools; not part of the binary
+  framedump/               prints one frame, exactly as the renderer sends it
+  ptycheck.py              drives the binary through a real pty
+
 internal/ui              ← imports models, keybindings, text, theme, whatsapp
-  components/               (interfaces only — never whatsmeow)
-  app/
+  layout/                    geometry, as a pure function of (width, height)
+  component/                the Region contract and the shared event vocabulary
+  theme/                    palette, metrics, glyphs, styles — a value
+  components/               sidebar, transcript, composer, statusbar, palette, overlay
+  app/                      the root model: composition, routing, dispatch
 internal/whatsapp       interfaces + the in-memory fake
   adapter/                ← the ONLY package importing go.mau.fi/whatsmeow
 internal/models         domain types; imports nothing from wterm
@@ -32,6 +43,67 @@ contaminate with protocol details.
 so a leak fails to compile in the direction that matters: a Phase 1 build
 exercises the entire interface with the protocol absent from the dependency
 graph.
+
+## Regions own their state
+
+Every part of the interface implements `component.Region`:
+
+```go
+type Region interface {
+    Name() string
+    Resize(layout.Rect)
+    Update(tea.Msg) (Region, tea.Cmd)
+    View() string
+    Focus() tea.Cmd
+    Blur()
+    Focused() bool
+}
+```
+
+That is Bubble Tea's pattern applied once per region rather than once per
+application, and it is what makes the components reusable: a sidebar that owns
+its own `Update` can be dropped into another application without that
+application reimplementing sidebar key handling.
+
+### Regions emit events, they do not mutate siblings
+
+A region never reaches into another region. It returns a `component.Event` as a
+command result, and the root decides what it means. This is the whole of the
+architecture:
+
+- The transcript cannot mark a chat read.
+- The sidebar cannot scroll the transcript.
+- Neither mentions a JID, a service or a protocol value.
+
+An event describes *intent* — "the user chose this chat" — never "set this
+field", so the root remains free to reject an event it disagrees with and to own
+every consequence.
+
+### Regions receive rectangles, they do not compute them
+
+The root owns the layout and is the only thing that knows it. Two regions
+independently guessing at widths is how a sidebar and a transcript end up
+disagreeing about where the divider is, and the disagreement shows up only as a
+visibly crooked frame.
+
+## The root owns decisions, regions own pixels
+
+`app.Model` composes regions into a frame and turns their events into
+consequences. It never draws a region itself.
+
+```go
+// in the transcript
+case keybindings.ActionReply:
+    return m, m.reportCursorAnd(component.KindMessageActivated, string(a))
+
+// in the root
+case component.KindMessageActivated:
+    return m.beginReply()
+```
+
+Neither half knows about the other, so either can be replaced — the transcript
+by a different renderer, the root by a different application — without touching
+the other.
 
 ## Why interfaces, given a single implementation
 
@@ -59,68 +131,87 @@ overload, so `whatsapp.Fake` exposes one view per interface, each an embedding
 shim that shadows only the conflicting methods. The compile-time assertions at
 the top of `fake.go` are what prove the split stays complete.
 
-## Pure-function rendering
-
-`View()` takes a state struct and returns a string. Components hold no cursor,
-no scroll offset and no selection; all of that lives in the caller's state.
-
-Consequences:
-
-- **The whole UI is testable without a terminal.** Every layout invariant —
-  no line exceeds the width, the frame is exactly as tall as the terminal, it
-  holds from 40×10 to 200×60 — is asserted in unit tests.
-- **The previous frame cannot be corrupted.** `Update` returns a copy.
-- **Rendering is deterministic.** No map iteration order leaks into the output:
-  `SortChats` and `ReactionSummary` are stable sorts.
-
-The composer is the deliberate exception: it owns its text buffer, because a text
-field needs a caret and a scroll offset that persist across frames.
-
 ## The input architecture
 
 Key handling has one path, and the order is load-bearing:
 
 ```
 key press
-  ├─▶ 1. overlay?        ──▶ the overlay consumes it
+  ├─▶ 1. overlay open?  ──▶ the overlay consumes it
   ├─▶ 2. escape?         ──▶ contextual cancel
-  ├─▶ 3. global binding? ──▶ quit, search, sync, panel focus
-  ├─▶ 4. search field?   ──▶ text
-  ├─▶ 5. composer?       ──▶ text and editing keys
-  └─▶ 6. panel binding?  ──▶ the rest
+  ├─▶ 3. global binding? ──▶ quit, search, sync, palette, panel focus
+  ├─▶ 4. palette open?   ──▶ printable input is the query
+  └─▶ 5. focused region  ──▶ everything else
 ```
 
-**Step 3 comes before step 5 on purpose.** The obvious order — offer the key to
-the focused text field first — makes every `ctrl` shortcut silently dead, because
-a text field accepts arbitrary input and reports that it consumed the press. The
-user would find that `ctrl+q` quit the application from the sidebar but not from
+**Step 3 comes before steps 4 and 5 on purpose.** The obvious order — offer the
+key to the focused text field first — makes every `ctrl` shortcut silently
+dead, because a text field accepts arbitrary input and reports that it consumed
+the press. The user would find that `ctrl+q` quits from the sidebar but not from
 the composer, which is where they spend most of their time.
 
-**Step 5 excludes reserved keys.** Enter, tab, the arrows and anything with a
-modifier are the binding map's, not the text field's. A textarea would treat
-enter as a newline, which is how a compose box ends up where nothing is ever
-sent.
+**Step 2 comes before step 3** because the user must always be able to abandon a
+mode they are stuck in. An escape that is itself bound to something is a trap.
 
-**Step 6 is scoped to the focused panel.** A key that scrolls the transcript must
-not scroll the sidebar, so `ctrl+b` means different things in different panels.
-Panel focus itself (`mod+h`, `mod+l`) is global, because the point of an
-i3-style hierarchy is that it reaches a panel from anywhere.
+**Step 5 is scoped by panel.** A key that scrolls the transcript must not scroll
+the sidebar, so `ctrl+b` means different things in different panels. Panel focus
+itself (`mod+h`, `mod+l`) is global, because the point of an i3-style hierarchy
+is that it reaches a panel from anywhere.
 
 ### Key conversion
 
-`internal/ui/app/keys.go` is the only place the two representations meet.
+`internal/ui/component/keys.go` is the only place the two representations meet.
 `keybindings.Key` is a plain struct so the whole binding system tests without
 Bubble Tea.
 
-The conversion reads `KeyPressMsg.Mod` and `.Code` rather than parsing
-`.String()`, because `String()` is lossy for printable keys: it returns `"j"` for
-ctrl+j, because ctrl+j and j arrive as the same byte. Parsing that string yields
-a key with no modifier and the binding silently fails to match.
+Three facts about Bubble Tea were verified against its source rather than its
+documentation, because each one breaks a shortcut and presents as "the
+application is ignoring my keys":
 
-Named keys are recognised through an explicit table, not a numeric range, because
-Bubble Tea is inconsistent: arrows and page keys live above `unicode.MaxRune`,
-while tab, enter, backspace, delete and space are plain ASCII. A range test
-catches half of them.
+- **`String()` drops modifiers for printable keys.** It reports `"j"` for ctrl+j,
+  because ctrl+j and j arrive as the same byte. The conversion therefore reads
+  `KeyPressMsg.Mod` and `.Code` and never parses the string.
+- **Named keys are not uniformly encoded.** Arrows and page keys live above
+  `unicode.MaxRune`; tab, enter, backspace, delete and space are plain ASCII
+  codes. A range test catches half of them, so recognition goes through an
+  explicit table.
+- **`String()` is inconsistent about whether a key has text.**
+  `{Code: 13, Text: "\r"}` reports `"\r"` and `{Code: 13}` reports `"enter"`.
+  Anything matching a key *name* must use `Keystroke()`, which is stable across
+  both.
+
+## Layout as a pure function
+
+`internal/ui/layout` computes the geometry of one frame from `(width, height)`
+and returns rectangles. It is a package of its own because a layout computed
+inside the render function cannot be tested without rendering, and a layout that
+is wrong is visible only as a broken screen.
+
+`Compute` is total: every size yields a valid layout, and sizes too small to
+render produce `ModeTooSmall` rather than negative dimensions, so callers never
+defend against it. The test suite sweeps every size from 40×10 to 200×60 and
+asserts that no region is negative and none escapes the terminal.
+
+## Pure-function rendering
+
+Every `View()` returns a string and touches nothing. The root enforces the
+frame's exact dimensions in one place — `paintBlock` — rather than trusting each
+region, because Lip Gloss pads a short block out to the tallest one's width and
+no region knows the terminal's dimensions. Without it the frame is exactly as
+wide as the widest line any region produced, which is how a TUI overflows its
+terminal and starts wrapping.
+
+Consequences:
+
+- **The whole UI is testable without a terminal.** Every layout invariant — no
+  line exceeds the width, the frame is exactly as tall as the terminal — is
+  asserted in unit tests, at every size.
+- **Rendering is deterministic.** No map iteration order leaks into the output:
+  `SortChats` and `ReactionSummary` are stable sorts.
+- **Overlays are layers.** Both the palette and the dialog stack return
+  full-screen frames; merging is one rule: a non-blank cell in the layer wins.
+  A centred dialog therefore covers the conversation without repainting the
+  status bar it overlaps.
 
 ## Terminal text handling
 
@@ -128,7 +219,9 @@ Three problems, one scanner.
 
 **Measurement.** A Go string counts bytes; a terminal counts cells. For `ñ` those
 are 2 and 1, for an emoji 4 and 2, for a CJK ideograph 3 and 2. Byte length
-overflows every column.
+overflows every column. `text.Width` ignores escape sequences, because the
+terminal does — and an earlier version did not, which padded every styled
+fragment several cells too wide and made every column calculation wrong.
 
 **Layout.** Long bodies wrap on word boundaries; an overlong word — a URL —
 breaks mid-word, because leaving it overlong would overflow the bubble and corrupt
@@ -151,10 +244,6 @@ layout went wrong:
 - It then tested every *byte* for 8-bit C1 introducers, and `0x9f` — a UTF-8
   continuation byte inside an emoji — matched APC, so emoji were silently eaten.
   Runes are now decoded before the byte-level scan.
-
-`text.OverlayCells` composes a styled box over existing content cell by cell,
-which is what lets a dialog sit over the conversation without erasing the parts
-that stick out around it.
 
 ## Theme as a value
 
@@ -183,36 +272,51 @@ The distinction matters: a command that is the *reply* must be returned from
 strands the key press and the key appears to do nothing. A follow-up has no
 caller, so queueing it until the next tick is correct and testable.
 
-The event stream is drained on its own goroutine and posted through
-`Program.Send`, so the model is only ever touched from the UI goroutine. All the
-model's service caches are replaced wholesale by command results rather than
-mutated in place, which is what lets `Shutdown` guarantee nothing is left running
-against a dead terminal.
+The account event stream is drained by a long-lived command that reads the
+service's channel and returns a *batch*, capped at sixty-four events. Draining in
+batches rather than one message per event is what keeps a resync usable: two
+thousand history messages become a handful of redraws rather than two thousand.
+There is no separate pump goroutine and no `Program.Send`, so the model is only
+ever touched from the UI goroutine.
+
+All the model's service caches are replaced wholesale by command results rather
+than mutated in place, which is what lets `Shutdown` guarantee nothing is left
+running against a dead terminal.
+
+## Detecting conflicts in the binding table
+
+`Map.Conflicts` compares every pair of claims on a key, not every claim against
+the first. Comparing against the first misses the case that matters: a key
+claimed once in the sidebar and twice in the message list is a conflict between
+the two message-list claims, while the first-claim comparison calls all three
+unambiguous. That is how `ctrl+e` was bound to both "edit message" and "scroll
+down" with a startup check that reported nothing.
+
+A regression test covers the three-claim shape directly, because a comparison
+that is subtly wrong in the direction of "no conflict" is invisible: a table with
+no real conflicts looks identical to a checker that cannot find any.
 
 ## Testing strategy
 
 - **Pure functions, tested directly.** Layout, measurement, sanitisation and the
   binding table are ordinary functions with no terminal in sight.
+- **Regions, driven through their own `Update`.** A region is constructed,
+  given a rectangle and a set of models, and asked for its `View`. No program, no
+  terminal, no Bubble Tea loop.
 - **The model, driven through its own handlers.** A test constructs the model,
-  applies a `WindowSizeMsg` and a `KeyPressMsg`, and calls `View()`. Commands are
-  run and their messages folded back in, because a Bubble Tea command is just a
-  function returning a message.
+  applies a `WindowSizeMsg` and a `KeyPressMsg`, and calls `View()`.
 - **The fake, through its interfaces.** Tests use the service views, so a change
-  to an interface breaks them rather than silently passing.
-- **`-race` in CI.** The sync goroutine writes while the UI reads;
-  `TestConcurrentAccessIsSafe` exercises that deliberately.
-- **A pty smoke test** for the built binary, because a TUI refuses to start
-  without a terminal and the alternate screen does not exist anywhere else.
-
-## Where Phase 2 goes
-
-`storage/sqlite` and `sync/` slot in without touching the UI:
-
-- The `ChatStore`/`MessageStore` interfaces mirror the service interfaces, so the
-  adapter composes them into one implementation.
-- The sync engine reconciles events into the stores. The UI already consumes a
-  single ordered event stream, so it does not change.
-- Two databases stay separate: whatsmeow's device store holds cryptographic
-  material under the library's schema, and wterm's holds application state under
-  wterm's. Merging them would couple wterm's migrations to an upstream schema that
-  changes with every protocol update.
+  that breaks one is caught where it is used.
+- **The frame, asserted exactly.** The root's frame is checked to be precisely
+  the terminal's dimensions at every size in a sweep, because a frame one cell
+  too wide makes the terminal wrap every line and one row short leaves stale
+  characters.
+- **The real program, through a pty.** `scripts/ptycheck.py` starts the binary
+  on a real tty at six sizes, sends keys, and requires a clean exit. A Bubble Tea
+  application cannot be exercised any other way: the renderer negotiates
+  capabilities with the terminal and blocks on answers it never receives when
+  there is no tty on stdin.
+- **The frame, exactly as sent.** `scripts/framedump` builds the same model the
+  program builds, drives it through its public surface by running the commands
+  `Update` returns, and prints `View()`. What it shows is what a user sees; the
+  pty capture, being a stream of partial repaints, is not.

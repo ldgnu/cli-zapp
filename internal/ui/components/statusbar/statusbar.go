@@ -1,9 +1,18 @@
-// Package statusbar renders the bottom status line.
+// Package statusbar renders the bottom bar: connection state, unread count,
+// typing notice and the context-sensitive key hints.
 //
-// The status bar is wterm's answer to a real usability problem: a keyboard-driven
-// client is unusable unless the bindings are discoverable. The bar shows the
-// current context, the connection state and the keys that work right now, so the
-// user never has to remember a table they cannot see.
+// # Why the hints live here
+//
+// A keyboard-driven client is unusable unless its bindings are discoverable, and a
+// help overlay that must be opened to answer "what does ctrl+k do" is one keystroke
+// too many. The bar shows the keys that work right now, so the interface teaches
+// itself while it is being used.
+//
+// # What is dropped first
+//
+// Context on the left, hints on the right. When the terminal is too narrow for
+// both, the hints go: they are the more expendable of the two, because the same
+// keys are also in the help overlay and in the README.
 package statusbar
 
 import (
@@ -11,16 +20,17 @@ import (
 
 	"github.com/wterm/wterm/internal/keybindings"
 	"github.com/wterm/wterm/internal/text"
+	"github.com/wterm/wterm/internal/ui/layout"
 	"github.com/wterm/wterm/internal/ui/theme"
 )
 
-// Connection describes the account's link state, as shown in the bar.
+// Connection is the account's link state.
 type Connection int
 
 // Recognised connection states.
 const (
-	// Disconnected means no session. Nothing can be sent or received.
-	Disconnected Connection = iota
+	// Offline means no session: nothing can be sent or received.
+	Offline Connection = iota
 	// Connecting means a session is being established.
 	Connecting
 	// Syncing means connected, with history still arriving.
@@ -33,142 +43,174 @@ const (
 func (c Connection) String() string {
 	switch c {
 	case Connecting:
-		return "connecting"
+		return "conectando"
 	case Syncing:
-		return "syncing"
+		return "sincronizando"
 	case Online:
-		return "online"
-	case Disconnected:
-		return "offline"
+		return "en línea"
+	case Offline:
+		return "sin conexión"
 	default:
-		return "unknown"
+		return "desconocido"
 	}
 }
 
-// State is everything the status bar needs in order to render.
-type State struct {
-	// Connection is the account's link state.
-	Connection Connection
-	// AccountName identifies the linked account, for example a phone number.
-	AccountName string
+// Model is the status bar's state.
+type Model struct {
+	rect  layout.Rect
+	theme theme.Theme
 
-	// Focus names the focused panel.
-	Focus keybindings.Panel
-	// FocusVisible reports whether the focused panel is the sidebar, which
-	// determines whether the chat list or the transcript gets the hints.
-	ChatName string
+	// mode decides what the bar is willing to show. It is consulted at render time
+	// rather than acted on when set, because the application calls SetState on every
+	// frame and SetMode only when the terminal is resized: a mode applied by clearing
+	// a field would be undone by the very next frame.
+	mode layout.Mode
 
-	// ChatCount and UnreadTotal drive the chat-list section.
-	ChatCount   int
-	UnreadTotal int
-
-	// ComposerHint is contextual help for the current input state, such as
-	// "enter to send".
-	ComposerHint string
-
-	// TypingIn names the chat whose peer is composing, empty when nobody is.
-	TypingIn string
-
-	// Width is the terminal width in cells.
-	Width int
-
-	// Help supplies the context-sensitive key hints.
-	Help []keybindings.HelpEntry
-
-	// Theme supplies colours and glyphs.
-	Theme theme.Theme
+	connection Connection
+	chatName   string
+	unread     int
+	typing     string
+	account    string
+	hints      []keybindings.HelpEntry
 }
 
-// maxHints bounds how many key hints fit, so that the right-hand side degrades
-// gracefully on a narrow terminal instead of overflowing and being clipped
-// mid-escape-sequence.
-const maxHints = 6
+// New creates a status bar.
+func New(t theme.Theme) *Model { return &Model{theme: t} }
 
-// View renders the status bar.
-func View(s State) string {
-	if s.Width <= 0 {
+// Resize gives the bar its rectangle.
+func (m *Model) Resize(r layout.Rect) { m.rect = r }
+
+// SetMode applies the layout mode: minimal drops the hints entirely.
+func (m *Model) SetMode(mode layout.Mode) { m.mode = mode }
+
+// SetState supplies everything the bar shows.
+func (m *Model) SetState(s State) {
+	m.connection = s.Connection
+	m.chatName = s.ChatName
+	m.unread = s.Unread
+	m.typing = s.Typing
+	m.account = s.Account
+	if s.Hints != nil {
+		m.hints = s.Hints
+	}
+}
+
+// State is the data the bar renders.
+type State struct {
+	Connection Connection
+	ChatName   string
+	Unread     int
+	Typing     string
+	Account    string
+	Hints      []keybindings.HelpEntry
+}
+
+// View renders the bar into exactly its rectangle.
+func (m *Model) View() string {
+	if m.rect.Empty() {
 		return ""
 	}
-	st := s.Theme.Styles
+	w := m.rect.Width
+	st := m.theme.Styles
+	g := m.theme.Glyphs
 
-	left := renderLeft(s, st)
+	left := m.renderLeft(st, g)
 
-	// Drop hints from the right until the two halves fit. This is a loop rather
-	// than a calculation because hint widths vary with the labels involved.
-	hints := s.Help
-	for {
-		gap := s.Width - text.VisibleWidth(left) - text.VisibleWidth(renderRight(hints, st))
-		if gap >= 1 || len(hints) == 0 {
-			break
-		}
-		hints = hints[:len(hints)-1]
+	// Drop hints from the right until both halves fit. The context is never dropped: a
+	// user who cannot see whether they are connected cannot tell a silent client from a
+	// working one.
+	//
+	// The count is a local rather than a truncation of m.hints, because View runs far
+	// more often than SetState: shrinking the stored slice here would make the bar
+	// permanently lose its hints after the user widened the terminal once and narrowed
+	// it back.
+	shown := m.hints
+	right := m.renderHints(st, g, shown)
+	for right != "" && text.VisibleWidth(left)+text.VisibleWidth(right)+1 > w {
+		shown = shown[:len(shown)-1]
+		right = m.renderHints(st, g, shown)
 	}
 
-	right := renderRight(hints, st)
+	if text.VisibleWidth(left) > w {
+		left = text.TruncateStyled(left, w)
+	}
 
-	gap := s.Width - text.VisibleWidth(left) - text.VisibleWidth(right)
+	gap := w - text.VisibleWidth(left) - text.VisibleWidth(right)
 	if gap < 1 {
-		// The hints did not fit after trimming; prioritise the context and let
-		// the bar be short rather than overflowing.
-		return pad(left, s.Width)
-	}
-
-	return text.PadRight(left+strings.Repeat(" ", gap)+right, s.Width)
-}
-
-// pad is a local alias keeping the layout arithmetic above readable.
-func pad(s string, width int) string { return text.PadRight(s, width) }
-
-// renderLeft builds the context section: connection, focus and chat name.
-func renderLeft(s State, st theme.Styles) string {
-	var parts []string
-
-	conn := st.StatusLabel.Render(s.Connection.String())
-	switch s.Connection {
-	case Online:
-		conn = st.Success.Render(s.Theme.Glyphs.OK + " " + s.Connection.String())
-	case Connecting, Syncing:
-		conn = st.Warning.Render(s.Connection.String() + "…")
-	case Disconnected:
-		conn = st.Error.Render(s.Connection.String())
-	}
-	parts = append(parts, conn)
-
-	if s.ChatName != "" {
-		parts = append(parts, st.StatusBar.Render(text.Truncate(s.ChatName, 24)))
-	}
-
-	if s.TypingIn != "" {
-		parts = append(parts, st.Accent.Render("typing…"))
-	}
-
-	if s.ChatCount > 0 {
-		badge := text.Truncate("chats", 24)
-		if s.UnreadTotal > 0 {
-			badge = text.Truncate("chats", 24) + " " + st.ChatBadge.Render(text.Itoa(s.UnreadTotal))
+		if text.VisibleWidth(left) >= w {
+			return text.TruncateStyled(left, w)
 		}
-		parts = append(parts, st.StatusLabel.Render(badge))
+		return left + strings.Repeat(" ", w-text.VisibleWidth(left))
 	}
-
-	return strings.Join(parts, st.StatusLabel.Render(" · "))
+	return left + strings.Repeat(" ", gap) + right
 }
 
-// renderRight builds the key hints.
+// renderLeft builds the context: connection, chat, typing and unread count.
+func (m *Model) renderLeft(st theme.Styles, g theme.Glyphs) string {
+	parts := make([]string, 0, 5)
+
+	switch m.connection {
+	case Online:
+		parts = append(parts, st.Success.Render(g.Online+" en línea"))
+	case Connecting, Syncing:
+		parts = append(parts, st.Warning.Render(m.connection.String()+"…"))
+	case Offline:
+		parts = append(parts, st.Error.Render(g.Offline+" "+Offline.String()))
+	}
+
+	if m.chatName != "" {
+		parts = append(parts, st.ChatTitle.Render(text.Truncate(m.chatName, 28)))
+	}
+
+	if m.typing != "" {
+		parts = append(parts, st.Accent.Render(g.Typing+" escribiendo…"))
+	}
+
+	if m.unread > 0 {
+		parts = append(parts,
+			st.ChatBadge.Render(text.Itoa(m.unread))+" "+st.Muted.Render("sin leer"))
+	}
+
+	return strings.Join(parts, st.Muted.Render(" · "))
+}
+
+// renderHints builds the right-hand key hints.
 //
-// Hints are rendered as "key label" pairs joined by spaces, which reads more
-// quietly than a bulleted list and fits the single-line budget.
-func renderRight(hints []keybindings.HelpEntry, st theme.Styles) string {
+// They are rendered as "[key] label" pairs, which reads quietly and survives a
+// narrow terminal by being trimmed from the right rather than wrapped.
+func (m *Model) renderHints(st theme.Styles, g theme.Glyphs, hints []keybindings.HelpEntry) string {
+	// Hints are dropped in minimal mode. They are in the help sheet and in the README,
+	// so nothing is lost but the rows, which the transcript needs more.
+	if !m.mode.ShowsKeyHints() || len(m.hints) == 0 {
+		return ""
+	}
+
+	// Four is what fits beside the context at a hundred columns; the bar's trimming
+	// loop removes the rest on narrower terminals.
+	const maxHints = 4
 	if len(hints) > maxHints {
 		hints = hints[:maxHints]
 	}
 
-	var parts []string
+	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
 		if len(h.Keys) == 0 {
 			continue
 		}
-		parts = append(parts,
-			st.StatusKey.Render(h.Keys[0])+" "+st.StatusLabel.Render(h.Help))
+
+		// The short label, not the sentence.
+		//
+		// A bar that shares one line with the connection state has room for about
+		// three labels, and the sentences are twenty-odd cells each. Truncating them
+		// produces "Cancelar la ac…", which tells the user less than the key alone does,
+		// so the short form is declared beside the sentence instead of derived from it.
+		label := h.Short
+		if label == "" {
+			label = h.Help
+		}
+
+		key := st.StatusKey.Render(g.KeyHintOpen + h.Keys[0] + g.KeyHintClose)
+		parts = append(parts, key+" "+st.StatusLabel.Render(label))
 	}
-	return strings.Join(parts, st.StatusLabel.Render("  "))
+	return strings.Join(parts, "  ")
 }

@@ -57,6 +57,13 @@ const (
 	ActionInfo Action = "app.info"
 	// ActionHelp toggles the keybinding cheat sheet.
 	ActionHelp Action = "app.help"
+	// ActionPalette opens the command palette.
+	//
+	// The palette is the escape hatch that keeps the binding table small: a
+	// keyboard-driven client accumulates actions faster than any keymap can carry
+	// them, and the ones that lose the competition stay reachable here rather
+	// than nowhere.
+	ActionPalette Action = "app.palette"
 	// ActionToggleMute mutes or unmutes the focused chat.
 	ActionToggleMute Action = "chat.toggle_mute"
 	// ActionTogglePin pins or unpins the focused chat.
@@ -81,6 +88,38 @@ const (
 	ActionOpen        Action = "msg.open"
 	ActionMarkStarred Action = "msg.star"
 )
+
+// ParseAction turns an action's name back into an [Action].
+//
+// It exists so that a UI region can name an action by string — which is how a region
+// reports intent without importing the dispatch table — and be rejected at the point of
+// use if the name is wrong. Without it, a typo in a region would silently resolve to
+// the zero Action and do nothing, which is indistinguishable from a broken keybinding.
+func ParseAction(s string) (Action, bool) {
+	a := Action(s)
+	if !a.known() {
+		return ActionNone, false
+	}
+	return a, true
+}
+
+// known reports whether a is one of the declared actions.
+func (a Action) known() bool {
+	switch a {
+	case ActionNone, ActionQuit, ActionCancel, ActionConfirm, ActionSearch, ActionSync,
+		ActionNewChat, ActionInfo, ActionHelp, ActionPalette,
+		ActionToggleMute, ActionTogglePin, ActionToggleArchive, ActionToggleRead,
+		ActionDeleteChat,
+		ActionReply, ActionEdit, ActionDelete, ActionReact, ActionForward, ActionCopy,
+		ActionSelect, ActionSelectAll, ActionDownload, ActionOpen, ActionMarkStarred,
+		NavUp, NavDown, NavLeft, NavRight,
+		ScrollUp, ScrollDown, ScrollTop, ScrollBottom, PageUp, PageDown,
+		PanelNext, PanelPrev, SendMessage, InsertNewline, ChatOpen:
+		return true
+	default:
+		return false
+	}
+}
 
 // Message-level actions require a selected message; the others do not. This
 // distinction drives context-sensitive help and validation.

@@ -6,370 +6,462 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
 	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/ui/components/messagelist"
+	"github.com/wterm/wterm/internal/notifications"
+	"github.com/wterm/wterm/internal/ui/components/composer"
 	"github.com/wterm/wterm/internal/ui/components/statusbar"
 	"github.com/wterm/wterm/internal/whatsapp"
 )
 
-// historyLimit is how many messages are fetched for a chat.
+// historyLimit is how many messages are fetched for a conversation.
+//
+// A terminal shows about twenty rows. Two hundred gives ten screens of scrollback,
+// which is enough to find a message someone referred to in conversation and cheap
+// enough to refetch after every send.
 const historyLimit = 200
 
-// listChats returns a command that loads the chat list.
+// requestTimeout bounds every service call.
+//
+// These run on the goroutine that would otherwise be rendering, so a call that never
+// returns freezes the interface with no way back. Thirty seconds is far longer than a
+// metadata fetch needs on a working connection, which is the point: the timeout is
+// there to catch a dead one, not to be tight.
+const requestTimeout = 30 * time.Second
+
+// longRequestTimeout bounds the calls that transfer data — attachments, mostly —
+// which legitimately take far longer than a metadata fetch.
+const longRequestTimeout = 3 * time.Minute
+
+// Messages the model consumes. Each is produced by a command, so the model is only
+// ever touched from Bubble Tea's goroutine.
+type (
+	// chatsReady carries the conversation list.
+	chatsReady struct{ chats []models.Chat }
+
+	// transcriptReady carries a transcript, tagged with the chat it belongs to.
+	//
+	// The tag is load-bearing: a slow response for a conversation the user has
+	// already left must not overwrite the one they are reading.
+	transcriptReady struct {
+		forChat  models.ChatID
+		messages []models.Message
+	}
+
+	// statusReady carries a connection state.
+	statusReady struct{ conn statusbar.Connection }
+
+	// eventsReady carries a drained batch of sync events.
+	eventsReady struct{ events []whatsapp.Event }
+
+	// noticesReady carries queued desktop notifications, to be raised off the
+	// render path.
+	noticesReady struct{ events []notifications.Event }
+
+	// failure carries a non-fatal error worth surfacing.
+	failure struct{ err error }
+
+	// toastPushed is returned by a command that raised a toast from its own
+	// goroutine. It exists only to give Bubble Tea something to redraw on.
+	toastPushed struct{ msg string }
+
+	// toastExpiredMsg asks the model to drop toasts that have outlived their
+	// display window.
+	toastExpiredMsg struct{ at time.Time }
+)
+
+// --- context ---
+
+// ctx returns the context every service call is made with.
+//
+// It is a method rather than a field because a context stored on a model outlives the
+// operation that created it, which is how a cancelled-but-not-cancelled context ends
+// up in a later call.
+func (m *Model) ctx() context.Context { return context.Background() }
+
+// callCtx returns a bounded context for one service call.
+func callCtx(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), d)
+}
+
+// --- queueing ---
+
+// queue records follow-up commands for the next tick.
+//
+// It is a method returning nothing, rather than one returning a nil command, so that
+// "return m, m.reply(m.queue(x))" cannot be written: queue contributes to the reply, it
+// does not produce one of its own.
+func (m *Model) queue(cmds ...tea.Cmd) {
+	for _, c := range cmds {
+		if c != nil {
+			m.pending = append(m.pending, c)
+		}
+	}
+}
+
+// reply joins the command produced by handling a message with queued follow-ups.
+//
+// Returning both matters: returning only the follow-ups drops the reply, and
+// returning only the reply drops the follow-ups. Joining them in one place is what
+// makes the omission impossible at each of the twenty call sites rather than
+// something every call site has to remember.
+func (m *Model) reply(cmd tea.Cmd) tea.Cmd {
+	if len(m.pending) == 0 {
+		return cmd
+	}
+	queued := m.pending
+	m.pending = nil
+
+	if cmd == nil {
+		return tea.Batch(queued...)
+	}
+	// A batch, not a sequence: the queued commands are independent fetches, and
+	// tea.Sequence would hide its members behind a message the caller has to
+	// remember to expand.
+	return tea.Batch(append(queued, cmd)...)
+}
+
+// --- chat commands ---
+
+// listChats loads the conversation list.
 func (m *Model) listChats() tea.Cmd {
+	svc := m.services.Chat
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := callCtx(requestTimeout)
 		defer cancel()
 
-		chats, err := m.deps.Chat.List(ctx)
+		chats, err := svc.List(ctx)
 		if err != nil {
-			return errMsg{err: err}
+			return failure{err: err}
 		}
-		return chatsLoadedMsg{chats: chats}
+		return chatsReady{chats: chats}
 	}
 }
 
-// openChat returns a command that loads the selected chat's transcript.
-func (m *Model) openChat() tea.Cmd {
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-	m.openedChat = chat.ID
-
-	// Move focus to the transcript immediately: waiting for the network before
-	// moving would make the UI feel unresponsive even though the request is
-	// already in flight.
-	m.setFocus(keybindings.PanelMessages)
-	m.msgSel = -1
-	m.msgOffset = 0
-
-	return m.fetchTranscript(chat)
-}
-
-// resync returns a command that restarts the event stream.
+// reload re-fetches a transcript.
 //
-// Restarting rather than only forcing a fetch is what makes "resync" recover a
-// wedged connection, which is the common case a user reaches for it in.
-func (m *Model) resync() tea.Cmd {
-	sync := m.deps.Sync
-
+// Almost every mutation ends here: after a send, a delete or a reaction the
+// authoritative list comes from the service, and re-fetching is cheaper than
+// reasoning about which cached field each mutation invalidated.
+func (m *Model) reload(id models.ChatID) tea.Cmd {
+	svc := m.services.Message
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := callCtx(requestTimeout)
 		defer cancel()
 
-		if err := sync.Stop(ctx); err != nil {
-			return errMsg{err: err}
+		msgs, err := svc.History(ctx, id, historyLimit)
+		if err != nil {
+			return failure{err: err}
 		}
-		if err := sync.Start(ctx); err != nil {
-			return errMsg{err: err}
-		}
-		return statusUpdatedMsg{conn: connFor(sync.Connected())}
+		return transcriptReady{forChat: id, messages: msgs}
 	}
 }
 
-// waitForEvent returns a command that blocks until the next sync event arrives.
+// setRead marks a conversation read or unread.
+func (m *Model) setRead(id models.ChatID, read bool) tea.Cmd {
+	svc := m.services.Chat
+	return func() tea.Msg {
+		ctx, cancel := callCtx(requestTimeout)
+		defer cancel()
+
+		if err := svc.SetRead(ctx, id, read); err != nil {
+			return failure{err: err}
+		}
+		return m.listChats()()
+	}
+}
+
+// chatFlag implements the pin, mute and archive toggles.
 //
-// The blocking is the point: Bubble Tea runs the command on its own goroutine and
-// re-renders when it returns, so the UI never waits on the network.
-func (m *Model) waitForEvent() tea.Cmd {
-	events := m.deps.Sync.Events()
-	return func() tea.Msg {
-		e, ok := <-events
-		if !ok {
-			// A closed channel means the stream ended. Reporting it as an empty
-			// batch rather than a nil message stops the wait loop.
-			return eventsMsg{}
-		}
-		return eventsMsg{events: []whatsapp.Event{e}}
-	}
-}
-
-// send returns a command that delivers the composer's contents.
-func (m *Model) send() (tea.Model, tea.Cmd) {
-	body := m.composer.Value()
-	if m.composer.Empty() {
-		return m, nil
-	}
-
-	chat, ok := m.currentChat()
-	if !ok {
-		return m, m.toast("Open a chat first", false)
-	}
-
-	// Editing replaces the body of an existing message rather than sending a new
-	// one, so the transcript keeps its shape.
-	if m.editing != "" {
-		id := m.editing
-		m.composer.Reset()
-		m.editing = ""
-		m.replyTo = nil
-
-		msg := m.deps.Message
-		return m, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-
-			edited, err := msg.Edit(ctx, chat.ID, id, body)
-			_ = edited
-			if err != nil {
-				return errMsg{err: err}
-			}
-			return messagesLoadedMsg{chat: chat.ID}
-		}
-	}
-
-	// Capture the reply reference before clearing the composer.
-	replyTo := m.replyTo
-	m.composer.Reset()
-	m.replyTo = nil
-
-	msgSvc := m.deps.Message
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		if _, err := msgSvc.Send(ctx, chat.ID, body); err != nil {
-			return errMsg{err: err}
-		}
-
-		// The reply quote is a client-side decoration; the protocol carries it
-		// as context info that the adapter attaches, so the fake needs it said
-		// explicitly for the transcript to look right.
-		_ = replyTo
-		return messagesLoadedMsg{chat: chat.ID}
-	}
-}
-
-// toggleRead marks the selected chat read or unread.
-func (m *Model) toggleRead() (tea.Model, tea.Cmd) {
-	chat, ok := m.currentChat()
-	if !ok {
-		return m, nil
-	}
-	read := chat.HasUnread
-
-	svc := m.deps.Chat
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := svc.SetRead(ctx, chat.ID, read); err != nil {
-			return errMsg{err: err}
-		}
-		return chatsLoadedMsg{chats: mustList(ctx, svc)}
-	}
-}
-
-// togglePin pins or unpins the selected chat.
-func (m *Model) togglePin() (tea.Model, tea.Cmd) {
-	return m.chatFlag(func(c *models.Chat) bool { return c.Pinned }, setPinned)
-}
-
-// toggleMute mutes or unmutes the selected chat.
-func (m *Model) toggleMute() (tea.Model, tea.Cmd) {
-	return m.chatFlag(func(c *models.Chat) bool { return c.Muted }, setMuted)
-}
-
-// toggleArchive archives or unarchives the selected chat.
-func (m *Model) toggleArchive() (tea.Model, tea.Cmd) {
-	return m.chatFlag(func(c *models.Chat) bool { return c.Archived }, setArchived)
-}
-
-// chatFlag implements the pin, mute and archive toggles, which differ only in
-// which field they touch and which service call they make.
-func (m *Model) chatFlag(
-	current func(*models.Chat) bool,
+// They differ only in which field they read and which call they make, so writing them
+// out three times would be three places to get a subtlety wrong.
+func (m *Model) chatFlag(id models.ChatID, current func(models.Chat) bool,
 	set func(context.Context, whatsapp.ChatService, models.ChatID, bool) error,
-) (tea.Model, tea.Cmd) {
-	chat, ok := m.currentChat()
-	if !ok {
-		return m, nil
-	}
-	value := !current(&chat)
-	svc := m.deps.Chat
+) tea.Cmd {
+	svc := m.services.Chat
 
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := set(ctx, svc, chat.ID, value); err != nil {
-			return errMsg{err: err}
-		}
-		return chatsLoadedMsg{chats: mustList(ctx, svc)}
-	}
-}
-
-// setPinned and friends adapt the service methods to the setter signature
-// chatFlag takes.
-func setPinned(ctx context.Context, s whatsapp.ChatService, id models.ChatID, v bool) error {
-	return s.SetPinned(ctx, id, v)
-}
-
-func setMuted(ctx context.Context, s whatsapp.ChatService, id models.ChatID, v bool) error {
-	return s.SetMuted(ctx, id, v)
-}
-
-func setArchived(ctx context.Context, s whatsapp.ChatService, id models.ChatID, v bool) error {
-	return s.SetArchived(ctx, id, v)
-}
-
-// deleteChat removes the selected chat after confirmation.
-func (m *Model) deleteChatCmd() tea.Cmd {
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-	svc := m.deps.Chat
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := svc.Delete(ctx, chat.ID); err != nil {
-			return errMsg{err: err}
-		}
-		return chatsLoadedMsg{chats: mustList(ctx, svc)}
-	}
-}
-
-// react applies a reaction to the cursor message.
-func (m *Model) react(glyph string) tea.Cmd {
-	msg, ok := m.messageAt(m.msgSel)
-	if !ok {
-		return nil
-	}
-	chat, ok := m.currentChat()
-	if !ok {
-		return nil
-	}
-
-	svc := m.deps.Message
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := svc.React(ctx, chat.ID, msg.ID, glyph); err != nil {
-			return errMsg{err: err}
-		}
-		return messagesLoadedMsg{chat: chat.ID}
-	}
-}
-
-// beginSearch enters search mode.
-func (m *Model) beginSearch() tea.Cmd {
-	m.searchActive = true
-	m.setFocus(keybindings.PanelSidebar)
-	return m.listChats()
-}
-
-// handleSearchKey consumes input while the search field is active.
-//
-// It reports whether it consumed the key. Escape is not handled here because the
-// caller checks it first, which keeps a single implementation of "escape always
-// wins".
-func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
-	switch msg.String() {
-	case "backspace":
-		if m.searchQuery != "" {
-			m.searchQuery = truncateRunes(m.searchQuery, len(m.searchQuery)-1)
-			m.clampSelectionToFilter()
-		}
-		return true, m.listChats()
-
-	case "enter":
-		m.searchActive = false
-		return true, nil
-
-	default:
-		// Only printable runes become part of the query.
-		if r := []rune(msg.String()); len(r) == 1 && msg.Text != "" {
-			m.searchQuery += msg.String()
-			m.chatSel = 0
-			m.chatOffset = 0
-			return true, m.listChats()
-		}
-	}
-	return false, nil
-}
-
-// mustList lists chats, returning an empty slice on failure.
-//
-// The error has already been reported through the caller's own call, so
-// returning empty here keeps one failure from cascading into two.
-func mustList(ctx context.Context, svc whatsapp.ChatService) []models.Chat {
-	chats, err := svc.List(ctx)
+	// Read the current value now, on the UI goroutine, so that two presses in quick
+	// succession compute their targets from the same state rather than racing.
+	ctx, cancel := callCtx(requestTimeout)
+	chat, err := svc.Get(ctx, id)
+	cancel()
 	if err != nil {
 		return nil
 	}
-	return chats
-}
+	value := !current(chat)
 
-// connFor maps a connected flag to a display state.
-func connFor(connected bool) statusbar.Connection {
-	if connected {
-		return statusbar.Online
-	}
-	return statusbar.Disconnected
-}
+	return func() tea.Msg {
+		callCtx, cancel := callCtx(requestTimeout)
+		defer cancel()
 
-// displayConn maps a protocol connection state to its display form.
-func displayConn(c whatsapp.ConnectionState) statusbar.Connection {
-	switch c {
-	case whatsapp.ConnectionConnecting:
-		return statusbar.Connecting
-	case whatsapp.ConnectionSyncing:
-		return statusbar.Syncing
-	case whatsapp.ConnectionOnline:
-		return statusbar.Online
-	default:
-		return statusbar.Disconnected
+		if err := set(callCtx, svc, id, value); err != nil {
+			return failure{err: err}
+		}
+		return m.listChats()()
 	}
 }
 
-// layoutRows recomputes the transcript's rows at the current width.
-func (m *Model) layoutRows() {
-	msgs := m.currentMessages()
-	w := m.theme.ContentWidth(m.width)
+func setPinned(
+	ctx context.Context, svc whatsapp.ChatService, id models.ChatID, v bool,
+) error {
+	return svc.SetPinned(ctx, id, v)
+}
 
-	// Follow the bottom when the user was already there, so an arriving message
-	// does not yank the view away from what they were reading.
-	wasAtBottom := m.atBottom
+func setMuted(
+	ctx context.Context, svc whatsapp.ChatService, id models.ChatID, v bool,
+) error {
+	return svc.SetMuted(ctx, id, v)
+}
 
-	m.rows = messagelist.Layout(msgs, w, messagelist.NewLoc(m.loc), m.cursorID(), m.selected, m.theme)
+func setArchived(
+	ctx context.Context, svc whatsapp.ChatService, id models.ChatID, v bool,
+) error {
+	return svc.SetArchived(ctx, id, v)
+}
 
-	// Record which transcript index each row belongs to.
-	//
-	// Selection, forwarding and editing all address a message by index into the
-	// transcript, but the laid-out rows also contain day separators and system
-	// notices. Without this mapping, acting on a row would need to re-derive the
-	// correspondence on every keystroke.
-	m.rowMessages = m.rowMessages[:0]
-	idx := -1
-	for _, r := range m.rows {
-		switch r.Kind {
-		case messagelist.KindMessage, messagelist.KindSystem:
-			idx++
-			m.rowMessages = append(m.rowMessages, r.MessageID)
-		default:
-			// Separators are not messages and occupy no transcript index.
+// deleteChat removes a conversation.
+func (m *Model) deleteChat(id models.ChatID) tea.Cmd {
+	svc := m.services.Chat
+	return func() tea.Msg {
+		ctx, cancel := callCtx(requestTimeout)
+		defer cancel()
+
+		if err := svc.Delete(ctx, id); err != nil {
+			return failure{err: err}
+		}
+		return m.listChats()()
+	}
+}
+
+// --- message commands ---
+
+// revoke removes a message for everyone.
+func (m *Model) revoke(chat models.ChatID, id models.MessageID) tea.Cmd {
+	svc := m.services.Message
+	return func() tea.Msg {
+		ctx, cancel := callCtx(requestTimeout)
+		defer cancel()
+
+		if err := svc.Delete(ctx, chat, id); err != nil {
+			return failure{err: err}
+		}
+		return m.reload(chat)()
+	}
+}
+
+// react applies a reaction. An empty glyph removes one.
+func (m *Model) react(chat models.ChatID, id models.MessageID, glyph string) tea.Cmd {
+	svc := m.services.Message
+	return func() tea.Msg {
+		ctx, cancel := callCtx(requestTimeout)
+		defer cancel()
+
+		if err := svc.React(ctx, chat, id, glyph); err != nil {
+			return failure{err: err}
+		}
+		return m.reload(chat)()
+	}
+}
+
+// send delivers the composer's draft.
+func (m *Model) send(chat models.ChatID, body string, mode composer.Mode) tea.Cmd {
+	svc := m.services.Message
+
+	if mode == composer.ModeEdit {
+		// Editing replaces the body of an existing message rather than sending a new
+		// one, so the transcript keeps its shape: an edit that appeared as an extra
+		// message would misrepresent what was said and when.
+		id := m.editing
+		return func() tea.Msg {
+			ctx, cancel := callCtx(requestTimeout)
+			defer cancel()
+
+			if _, err := svc.Edit(ctx, chat, id, body); err != nil {
+				return failure{err: err}
+			}
+			return m.reload(chat)()
 		}
 	}
 
-	if wasAtBottom {
-		m.msgOffset = messagelist.MaxOffset(m.rows, viewportHeight(m))
+	return func() tea.Msg {
+		ctx, cancel := callCtx(requestTimeout)
+		defer cancel()
+
+		if _, err := svc.Send(ctx, chat, body); err != nil {
+			return failure{err: err}
+		}
+		return m.reload(chat)()
 	}
 }
 
-// truncateRunes removes the last n runes of s.
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if n <= 0 {
-		return ""
+// download fetches a message's attachment.
+func (m *Model) download(chat models.ChatID, id models.MessageID) tea.Cmd {
+	svc := m.services.Media
+	return func() tea.Msg {
+		ctx, cancel := callCtx(longRequestTimeout)
+		defer cancel()
+
+		path, err := svc.Download(ctx, chat, id)
+		if err != nil {
+			return failure{err: err}
+		}
+		return toastPushed{msg: "guardado en " + path}
 	}
-	if n >= len(r) {
-		return ""
+}
+
+// openInDesktop hands an attachment to the desktop's file handler.
+//
+// It downloads first when the file is not already local, so the user never waits
+// twice for the same bytes.
+func (m *Model) openInDesktop(chat models.ChatID, msg models.Message) tea.Cmd {
+	svc := m.services.Media
+
+	path := ""
+	if msg.Media != nil {
+		path = msg.Media.LocalPath
 	}
-	return string(r[:len(r)-n])
+
+	return func() tea.Msg {
+		ctx, cancel := callCtx(longRequestTimeout)
+		defer cancel()
+
+		if path == "" {
+			p, err := svc.Download(ctx, chat, msg.ID)
+			if err != nil {
+				return failure{err: err}
+			}
+			path = p
+		}
+		if err := svc.Open(ctx, path); err != nil {
+			return failure{err: err}
+		}
+		return nil
+	}
+}
+
+// --- sync commands ---
+
+// syncNow restarts the event stream and reloads everything on screen.
+//
+// Stopping and starting rather than merely refetching is deliberate: "resync" has to
+// recover a wedged connection, and a refetch would leave the stream wedged while
+// making the status bar look healthy — which is worse than doing nothing, because the
+// user would stop retrying.
+func (m *Model) syncNow() tea.Cmd {
+	svc := m.services.Sync
+	if svc == nil {
+		return m.listChats()
+	}
+
+	return func() tea.Msg {
+		ctx, cancel := callCtx(longRequestTimeout)
+		defer cancel()
+
+		if err := svc.Stop(ctx); err != nil {
+			return failure{err: err}
+		}
+		if err := svc.Start(ctx); err != nil {
+			return failure{err: err}
+		}
+		// Each member of the batch is wrapped in its own command, because tea.Batch
+		// takes commands rather than messages. A message passed directly here would
+		// be a compile error now and a silently dropped update if the types ever
+		// converged.
+		conn := statusReady{conn: connectionFor(connectionStateFor(svc.Connected()))}
+		return tea.Batch(
+			func() tea.Msg { return conn },
+			m.listChats(),
+			m.waitForEvent(),
+		)()
+	}
+}
+
+// waitForEvent blocks until the next batch of account events arrives.
+//
+// Draining in batches rather than one message per event is what keeps a resync from
+// flooding Bubble Tea's loop with a redraw per message: two thousand history messages
+// become a handful of frames instead of two thousand.
+func (m *Model) waitForEvent() tea.Cmd {
+	svc := m.services.Sync
+	if svc == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		events := svc.Events()
+
+		first, ok := <-events
+		if !ok {
+			// The stream closed: the service was stopped. Returning a connection
+			// state rather than nothing means the status bar stops claiming to be
+			// online.
+			return statusReady{conn: statusbar.Offline}
+		}
+
+		batch := append(make([]whatsapp.Event, 0, 16), first)
+
+		// Take whatever else is already waiting, without blocking. The cap bounds
+		// how long a single Update can hold the UI; the rest arrive on the next
+		// pass, one tick later.
+		const maxBatch = 64
+	drain:
+		for len(batch) < maxBatch {
+			select {
+			case e, ok := <-events:
+				if !ok {
+					break drain
+				}
+				batch = append(batch, e)
+			default:
+				break drain
+			}
+		}
+
+		return eventsReady{events: batch}
+	}
+}
+
+// --- notifications ---
+
+// notifyAll raises queued desktop notifications.
+//
+// They are raised here, on the UI goroutine, rather than from the stream reader,
+// because the notifier shells out and a slow `notify-send` would stall the event
+// pump that everything else depends on.
+func (m *Model) notifyAll(events []notifications.Event) tea.Cmd {
+	if len(events) == 0 || m.notifier == nil {
+		return nil
+	}
+	notifier := m.notifier
+	return func() tea.Msg {
+		for _, e := range events {
+			notifier.Notify(e)
+		}
+		return nil
+	}
+}
+
+// connectionFor maps the service's connection state onto the bar's.
+//
+// The four protocol states collapse onto three display states on purpose: the bar has
+// one line and the difference between "connecting" and "syncing" is not something a
+// user can act on. Offline stays distinct because it is the one state that changes what
+// they should expect to happen.
+func connectionFor(state whatsapp.ConnectionState) statusbar.Connection {
+	switch state {
+	case whatsapp.ConnectionOnline:
+		return statusbar.Online
+	case whatsapp.ConnectionConnecting, whatsapp.ConnectionSyncing:
+		return statusbar.Syncing
+	default:
+		return statusbar.Offline
+	}
+}
+
+// connectionStateFor maps the service's boolean onto a protocol state, so that
+// [connectionFor] has a single input type.
+func connectionStateFor(connected bool) whatsapp.ConnectionState {
+	if connected {
+		return whatsapp.ConnectionOnline
+	}
+	return whatsapp.ConnectionOffline
 }
