@@ -1,8 +1,8 @@
-# wterm
+# cli-zapp
 
 A WhatsApp client for the terminal, built with Bubble Tea and Go.
 
-wterm is keyboard-driven and visually close to WhatsApp Web: a chat list on the
+cli-zapp is keyboard-driven and visually close to WhatsApp Web: a chat list on the
 left, the conversation on the right, bubbles, timestamps, delivery marks and
 presence. It runs on Linux, builds to a static binary with no C toolchain, and
 keeps its state in a local SQLite database.
@@ -21,14 +21,14 @@ The interface decisions and their reasoning are in
 ## Running it
 
 ```sh
-make build      # → bin/wterm
+make build      # → bin/cli-zapp
 make run        # build and start with demo data
 make keys       # print the default keybindings as TOML
 make frame      # print one frame of the interface, at any size
 ```
 
 ```
-wterm [flags]
+cli-zapp [flags]
 
   --demo           run against in-memory demo data (default true)
   --color=dark     colour scheme: dark or light
@@ -39,7 +39,7 @@ wterm [flags]
   --help-keys      print the default keybindings and exit
 ```
 
-The binary is built with `CGO_ENABLED=0` and is statically linked — `file bin/wterm`
+The binary is built with `CGO_ENABLED=0` and is statically linked — `file bin/cli-zapp`
 says so, and CI asserts it. When the local database arrives it will be provided by
 [modernc.org/sqlite](https://modernc.org/sqlite), a pure-Go implementation, precisely
 so that this stays true: a chat client that needs a matching libc is a chat client
@@ -116,7 +116,7 @@ scripts/
   ptycheck.py    drives the binary through a real pty
 
 internal/
-  models/        domain types; imports nothing from wterm
+  models/        domain types; imports nothing from cli-zapp
   keybindings/   actions, key specs, binding table — no Bubble Tea
   text/          terminal-aware measurement, wrapping, ANSI safety
   whatsapp/      service interfaces + the in-memory fake
@@ -180,7 +180,7 @@ it is the only viable option. Verified capabilities and rejected alternatives
 are in [docs/PROTOCOL.md](docs/PROTOCOL.md); the honest limitations are in
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-**There is no official API for a personal WhatsApp account.** wterm speaks an
+**There is no official API for a personal WhatsApp account.** cli-zapp speaks an
 unofficial protocol, which carries real consequences — including the possibility
 of an account ban. Those are documented rather than glossed over.
 
@@ -312,6 +312,6 @@ matter of filling in one package rather than writing the interface twice.
 
 MPL-2.0. See [LICENSE](LICENSE).
 
-wterm is not affiliated with, endorsed by, or connected to WhatsApp or Meta. It
+cli-zapp is not affiliated with, endorsed by, or connected to WhatsApp or Meta. It
 uses an unofficial protocol; read [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
 before linking an account you care about.

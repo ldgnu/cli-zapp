@@ -1,4 +1,4 @@
-// Package logging provides wterm's optional structured logging.
+// Package logging provides cli-zapp's optional structured logging.
 //
 // # Never to stdout
 //
@@ -46,7 +46,7 @@ type Options struct {
 	MaxSize int64
 }
 
-// Logger is wterm's logging interface.
+// Logger is cli-zapp's logging interface.
 //
 // It is deliberately tiny: the two verbs the application needs, plus a structured
 // pair for key-value context. A wider interface invites call sites that log
@@ -73,7 +73,7 @@ func Noop() *Logger {
 func New(opts Options) (*Logger, func(), error) {
 	path := opts.File
 	if path == "" {
-		f, err := os.CreateTemp("", "wterm-*.log")
+		f, err := os.CreateTemp("", "cli-zapp-*.log")
 		if err != nil {
 			return nil, func() {}, fmt.Errorf("creating log file: %w", err)
 		}
@@ -174,17 +174,17 @@ func (l *Logger) close() {
 	l.file = nil
 }
 
-// DefaultPath returns the conventional configuration directory for wterm's state.
+// DefaultPath returns the conventional configuration directory for cli-zapp's state.
 //
 // It lives in the user config directory rather than the data directory because
-// what wterm stores there is configuration and session state, not a cache that
+// what cli-zapp stores there is configuration and session state, not a cache that
 // can be regenerated.
 func DefaultPath(name string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("locating config directory: %w", err)
 	}
-	return filepath.Join(dir, "wterm", name), nil
+	return filepath.Join(dir, "cli-zapp", name), nil
 }
 
 // EnsureDir creates a directory with restrictive permissions.

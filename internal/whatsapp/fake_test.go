@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wterm/wterm/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/models"
 )
 
 // env bundles the fake with its service views and the ids the tests refer to.

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wterm/wterm/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/models"
 )
 
 // Errors returned by [Fake].
@@ -102,7 +102,7 @@ func NewFake(self models.Contact) *Fake {
 		messages:    make(map[models.ChatID][]models.Message),
 		events:      make(chan Event, 64),
 		conn:        ConnectionOffline,
-		downloadDir: filepath.Join(os.TempDir(), "wterm-fake-media"),
+		downloadDir: filepath.Join(os.TempDir(), "cli-zapp-fake-media"),
 	}
 }
 
@@ -455,7 +455,7 @@ func (f *Fake) download(
 		return "", fmt.Errorf("creating download directory: %w", err)
 	}
 	// 0o600 rather than 0o644: attachments are private correspondence.
-	if err := os.WriteFile(path, []byte("wterm fake attachment"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("cli-zapp fake attachment"), 0o600); err != nil {
 		return "", fmt.Errorf("writing attachment: %w", err)
 	}
 	return path, nil
@@ -478,7 +478,7 @@ func (f *Fake) send(_ context.Context, chatID models.ChatID, body string) (model
 	}
 	f.nextID++
 	m := models.Message{
-		ID:        models.MessageID(fmt.Sprintf("wterm-fake-%06d", f.nextID)),
+		ID:        models.MessageID(fmt.Sprintf("cli-zapp-fake-%06d", f.nextID)),
 		ChatID:    chatID,
 		SenderID:  f.self.ID,
 		Direction: models.DirectionOutgoing,
@@ -784,7 +784,7 @@ func (f *Fake) Receive(chatID models.ChatID, sender models.ContactID, body strin
 	f.mu.Lock()
 	f.nextID++
 	m := models.Message{
-		ID:        models.MessageID(fmt.Sprintf("wterm-fake-in-%06d", f.nextID)),
+		ID:        models.MessageID(fmt.Sprintf("cli-zapp-fake-in-%06d", f.nextID)),
 		ChatID:    chatID,
 		SenderID:  sender,
 		Direction: models.DirectionIncoming,
@@ -810,7 +810,7 @@ func (f *Fake) Speak(chatID models.ChatID, body string) models.Message {
 	f.mu.Lock()
 	f.nextID++
 	m := models.Message{
-		ID:        models.MessageID(fmt.Sprintf("wterm-fake-out-%06d", f.nextID)),
+		ID:        models.MessageID(fmt.Sprintf("cli-zapp-fake-out-%06d", f.nextID)),
 		ChatID:    chatID,
 		SenderID:  f.self.ID,
 		Direction: models.DirectionOutgoing,

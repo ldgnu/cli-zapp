@@ -4,7 +4,7 @@
 // # The boundary
 //
 // These interfaces are the entire surface the UI is allowed to see. They are
-// expressed in terms of [github.com/wterm/wterm/internal/models] types, never in
+// expressed in terms of [github.com/cli-zapp/cli-zapp/internal/models] types, never in
 // terms of protocol types, which is what guarantees that a WhatsApp protocol
 // change is absorbed by one package rather than rippling through the app.
 //
@@ -20,7 +20,7 @@ package whatsapp
 import (
 	"context"
 
-	"github.com/wterm/wterm/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/models"
 )
 
 // ChatService reads and modifies conversations.

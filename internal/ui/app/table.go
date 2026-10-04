@@ -1,8 +1,8 @@
 package app
 
 import (
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
 )
 
 // Sections the palette groups commands under.

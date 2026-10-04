@@ -3,12 +3,12 @@ package app
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/notifications"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/components/composer"
-	"github.com/wterm/wterm/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/notifications"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/composer"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
 // onEvent routes an event emitted by a region.

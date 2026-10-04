@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 func renderLines(o Overlay, w, h int) []string {

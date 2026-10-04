@@ -1,18 +1,18 @@
 # Limitations
 
-What wterm cannot do, and what might go wrong. Written before implementation, as
+What cli-zapp cannot do, and what might go wrong. Written before implementation, as
 the brief required, and kept current as things land.
 
 ## The one that matters
 
-**wterm speaks an unofficial protocol, and using it carries a non-zero risk of
+**cli-zapp speaks an unofficial protocol, and using it carries a non-zero risk of
 an account ban.**
 
 WhatsApp's Terms of Service prohibit unauthorised automated access. There is no
 API for personal accounts, so any third-party client is in that category. Being
 straight about the risk:
 
-- **Practical exposure is low.** wterm sends what a human sends, at human volume.
+- **Practical exposure is low.** cli-zapp sends what a human sends, at human volume.
   The Matrix and Signal bridges built on whatsmeow have served thousands of
   accounts for years.
 - **The risk is not zero, and cannot be made zero.** Nobody can promise an
@@ -26,7 +26,7 @@ that matters.
 
 ## Protocol limitations
 
-These come from whatsmeow and are not fixable in wterm:
+These come from whatsmeow and are not fixable in cli-zapp:
 
 | Limitation | Detail |
 | --- | --- |
@@ -44,7 +44,7 @@ commit date, and there is no `v1.2.3` to ask for. That makes a plain `go build`
 non-reproducible in practice: any upstream commit can change what a fresh build
 resolves to.
 
-wterm therefore vendors dependencies and commits `vendor/`, so a given commit of
+cli-zapp therefore vendors dependencies and commits `vendor/`, so a given commit of
 this repository always builds the same bytes. `make vendor` refreshes it.
 
 ## Phase 1 scope

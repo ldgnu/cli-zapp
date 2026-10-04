@@ -61,7 +61,7 @@ type Chat struct {
 	Name string
 
 	// AvatarURL is an address from which the avatar bytes can be fetched. It is
-	// a URL rather than decoded image bytes so that wterm does not hold images
+	// a URL rather than decoded image bytes so that cli-zapp does not hold images
 	// in memory; the media service resolves it on demand.
 	AvatarURL string
 

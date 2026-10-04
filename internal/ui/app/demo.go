@@ -3,8 +3,8 @@ package app
 import (
 	"time"
 
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
 // DemoData builds a fake populated with realistic conversations.
@@ -23,7 +23,7 @@ func DemoData() *whatsapp.Fake {
 		ID:     selfID,
 		Name:   "You",
 		Phone:  "+54 9 11 0000-0001",
-		About:  "using wterm",
+		About:  "using cli-zapp",
 		IsSelf: true,
 	}
 	f := whatsapp.NewFake(self)

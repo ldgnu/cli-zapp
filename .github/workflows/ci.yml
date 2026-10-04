@@ -47,9 +47,9 @@ jobs:
         run: |
           # CGO is off deliberately: the binary must be static, and the build must not
           # depend on the runner's C toolchain matching anything.
-          if file bin/wterm | grep -q 'dynamically linked'; then
-            echo "::error::wterm must be statically linked"
-            file bin/wterm
+          if file bin/cli-zapp | grep -q 'dynamically linked'; then
+            echo "::error::cli-zapp must be statically linked"
+            file bin/cli-zapp
             exit 1
           fi
 

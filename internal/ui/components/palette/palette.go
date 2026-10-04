@@ -21,10 +21,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // entry is one filtered row.

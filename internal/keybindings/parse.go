@@ -35,7 +35,7 @@ var modAliases = map[string]Mod{
 // "shift+tab", "f1" or "j".
 //
 // "mod" is accepted as a synonym for ctrl, since that is the spelling used
-// throughout wterm's documentation and matches the i3wm-inspired vocabulary the
+// throughout cli-zapp's documentation and matches the i3wm-inspired vocabulary the
 // bindings are designed around.
 func ParseKey(spec string) (Key, error) {
 	raw := strings.TrimSpace(spec)
@@ -123,7 +123,7 @@ func finishKey(part string, mod Mod, spec string) (Key, error) {
 func parseMod(s string) (Mod, bool) {
 	switch s {
 	case "mod":
-		// "mod" is wterm's canonical name for ctrl, so "mod+q" and "ctrl+q"
+		// "mod" is cli-zapp's canonical name for ctrl, so "mod+q" and "ctrl+q"
 		// resolve identically.
 		return ModCtrl, true
 	case "none", "nomod":

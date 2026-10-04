@@ -3,8 +3,8 @@
 // # Three channels, chosen by what the terminal can do
 //
 //   - the terminal bell, which works everywhere and can be silenced by the user
-//   - a desktop notification through notify-send, for when wterm is not focused
-//   - the in-app visual badge, which is the only one that survives inside wterm
+//   - a desktop notification through notify-send, for when cli-zapp is not focused
+//   - the in-app visual badge, which is the only one that survives inside cli-zapp
 //
 // The desktop channel is optional by nature: notify-send may be absent, and the
 // server it talks to may be unavailable. That is detected once at startup rather
@@ -37,7 +37,7 @@ type Options struct {
 	// [DesktopAvailable] rather than having the notifier shell out.
 	Available bool
 
-	// SuppressWhileFocused skips desktop notifications when wterm has focus,
+	// SuppressWhileFocused skips desktop notifications when cli-zapp has focus,
 	// which is what any sane messenger does.
 	SuppressWhileFocused bool
 
@@ -77,7 +77,7 @@ func New(opts Options) *Notifier {
 // DesktopAvailable reports whether notify-send is present.
 //
 // It is a PATH lookup rather than a test execution, because running notify-send
-// at startup would pop a notification the moment wterm launches.
+// at startup would pop a notification the moment cli-zapp launches.
 func DesktopAvailable() bool {
 	_, err := exec.LookPath("notify-send")
 	return err == nil
@@ -151,7 +151,7 @@ func (n *Notifier) desktop(e Event) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 
 	cmd := exec.CommandContext(ctx, cmdName,
-		"--app-name=wterm",
+		"--app-name=cli-zapp",
 		"--urgency=normal",
 		e.Title,
 		e.Body,

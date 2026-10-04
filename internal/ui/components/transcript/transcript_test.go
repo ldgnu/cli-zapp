@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/components/transcript"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/transcript"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // rect builds a transcript's rectangle.

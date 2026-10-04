@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/components/statusbar"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/statusbar"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // build returns a status bar of the given width in the given mode.

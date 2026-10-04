@@ -26,8 +26,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // Kind distinguishes the overlay types, because they behave differently: a menu

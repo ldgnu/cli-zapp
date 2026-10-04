@@ -1,4 +1,4 @@
-module github.com/wterm/wterm
+module github.com/cli-zapp/cli-zapp
 
 go 1.27.1
 

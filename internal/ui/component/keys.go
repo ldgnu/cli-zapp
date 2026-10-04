@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
 )
 
 // ConvertKey translates a Bubble Tea key press into a [keybindings.Key].
@@ -44,7 +44,7 @@ func ConvertKey(msg tea.KeyPressMsg) keybindings.Key {
 	return keybindings.Key{Rune: msg.Code, Mod: mod}
 }
 
-// namedKeyCodes maps Bubble Tea's key codes to wterm's canonical names.
+// namedKeyCodes maps Bubble Tea's key codes to cli-zapp's canonical names.
 //
 // Space is included although its code is printable ASCII: "space" is the name a
 // user writes in a configuration file, and no binding uses a bare " " rune.
@@ -65,7 +65,7 @@ var namedKeyCodes = map[rune]string{
 	tea.KeyPgDown:    keybindings.KeyPageDown,
 }
 
-// ConvertMod maps Bubble Tea's modifier set onto wterm's.
+// ConvertMod maps Bubble Tea's modifier set onto cli-zapp's.
 func ConvertMod(m tea.KeyMod) keybindings.Mod {
 	var out keybindings.Mod
 	if m&tea.ModShift != 0 {

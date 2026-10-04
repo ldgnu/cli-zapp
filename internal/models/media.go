@@ -42,7 +42,7 @@ func (m MediaKind) String() string {
 	}
 }
 
-// IsRenderable reports whether wterm can attempt to draw this media as an
+// IsRenderable reports whether cli-zapp can attempt to draw this media as an
 // image in the terminal.
 //
 // Terminal graphics require either a Sixel-, Kitty- or iTerm-compatible
@@ -65,7 +65,7 @@ type Media struct {
 	// sometimes for images.
 	Filename string
 
-	// MimeType is the declared content type. It is advisory: wterm trusts it
+	// MimeType is the declared content type. It is advisory: cli-zapp trusts it
 	// for choosing a renderer but falls back to [Media.Kind] when it is empty
 	// or unrecognised.
 	MimeType string

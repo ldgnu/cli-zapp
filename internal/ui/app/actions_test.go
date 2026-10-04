@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/components/composer"
-	"github.com/wterm/wterm/internal/ui/components/statusbar"
-	"github.com/wterm/wterm/internal/ui/theme"
-	"github.com/wterm/wterm/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/composer"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/statusbar"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
 // harness drives a model the way Bubble Tea's loop does: apply a message, run the

@@ -1,4 +1,4 @@
-# golangci-lint configuration for wterm.
+# golangci-lint configuration for cli-zapp.
 #
 # # Why this set
 #
@@ -119,7 +119,7 @@ linters:
       # encoding/json. Only prose follows the UK locale above. misspell cannot tell
       # a technical term from a spelling disagreement, so these are excluded rather
       # than renamed: renaming an exported API to satisfy a prose linter would make
-      # wterm's vocabulary inconsistent with the ecosystem it plugs into.
+      # cli-zapp's vocabulary inconsistent with the ecosystem it plugs into.
       - linters:
           - misspell
         text: "(?i)\\bcolou?r\\b"
@@ -134,7 +134,7 @@ linters:
           - errcheck
           - dupl
       # main wires the application together; the binary's exit code is run()'s job.
-      - path: cmd/wterm/main\.go
+      - path: cmd/cli-zapp/main\.go
         linters:
           - gosec
 

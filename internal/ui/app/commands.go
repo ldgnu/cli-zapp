@@ -6,11 +6,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/notifications"
-	"github.com/wterm/wterm/internal/ui/components/composer"
-	"github.com/wterm/wterm/internal/ui/components/statusbar"
-	"github.com/wterm/wterm/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/notifications"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/composer"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/statusbar"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
 // historyLimit is how many messages are fetched for a conversation.

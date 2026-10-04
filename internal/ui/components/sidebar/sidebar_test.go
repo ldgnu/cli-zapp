@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/components/sidebar"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/sidebar"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // fixture builds a sidebar over a known conversation list.
@@ -112,7 +112,7 @@ func TestZeroSizedRectangleRendersNothing(t *testing.T) {
 func TestBrandAndSearchAreDrawnInFullMode(t *testing.T) {
 	body := strings.Join(render(fixture(t, rect(30, 10), "")), "\n")
 
-	if !strings.Contains(body, "WTERM") {
+	if !strings.Contains(body, "CLI-ZAPP") {
 		t.Error("the wordmark should be drawn")
 	}
 	if !strings.Contains(body, "Buscar chats") {
@@ -126,7 +126,7 @@ func TestBrandAndSearchAreDroppedInMinimalMode(t *testing.T) {
 	s.Resize(rect(30, 10))
 
 	body := strings.Join(render(s), "\n")
-	if strings.Contains(body, "WTERM") {
+	if strings.Contains(body, "CLI-ZAPP") {
 		t.Error("minimal mode should not repeat the wordmark")
 	}
 	if strings.Contains(body, "Buscar chats") {

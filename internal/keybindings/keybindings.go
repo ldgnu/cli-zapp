@@ -1,4 +1,4 @@
-// Package keybindings is wterm's single source of truth for keyboard input.
+// Package keybindings is cli-zapp's single source of truth for keyboard input.
 //
 // # Why this package exists
 //

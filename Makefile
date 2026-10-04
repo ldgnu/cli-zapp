@@ -1,10 +1,10 @@
-# Makefile for wterm.
+# Makefile for cli-zapp.
 #
 # The targets are ordered from fastest to slowest, so `make` alone gives the
 # useful feedback loop: format, vet, unit tests, then the slower lint.
 
 GO      ?= go
-BIN     ?= wterm
+BIN     ?= cli-zapp
 BINDIR  ?= $(CURDIR)/bin
 PKG     := ./...
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -82,13 +82,13 @@ tools: ## Install development tools.
 .PHONY: build
 build: ## Build the binary into bin/.
 	@mkdir -p $(BINDIR)
-	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINDIR)/$(BIN) ./cmd/wterm
+	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BINDIR)/$(BIN) ./cmd/cli-zapp
 	@echo "built $(BINDIR)/$(BIN) ($(VERSION))"
 
 ## install: install the binary into GOBIN
 .PHONY: install
 install: ## Install the binary into GOBIN.
-	$(GO) install -trimpath -ldflags '$(LDFLAGS)' ./cmd/wterm
+	$(GO) install -trimpath -ldflags '$(LDFLAGS)' ./cmd/cli-zapp
 
 ## run: build and run against demo data
 .PHONY: run

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive bin/wterm through a real pty and check that it lives up.
+"""Drive bin/cli-zapp through a real pty and check that it lives up.
 
 # What this checks, and what it does not
 
@@ -78,7 +78,7 @@ def main():
 
     pid, master = pty.fork()
     if pid == 0:
-        os.execv("./bin/wterm", ["wterm", "--demo"])
+        os.execv("./bin/cli-zapp", ["cli-zapp", "--demo"])
         os._exit(1)
 
     # The size must be set before the process starts rendering: a 0x0 window makes the
@@ -156,7 +156,7 @@ def report(captured, cols, rows):
     else:
         # The three zones, each identified by content only it draws.
         if (cols, rows) >= FULL_LAYOUT_MIN:
-            if "WTERM" not in plain:
+            if "CLI-ZAPP" not in plain:
                 problems.append("the sidebar's wordmark never appeared")
             if "\u2502" not in plain and "|" not in plain:
                 problems.append("the divider between the columns never appeared")

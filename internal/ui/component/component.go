@@ -1,4 +1,4 @@
-// Package component defines the contract every wterm UI region follows.
+// Package component defines the contract every cli-zapp UI region follows.
 //
 // # Model / Update / View per region
 //
@@ -30,9 +30,9 @@ package component
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
 )
 
 // Region is a focusable, self-contained part of the interface.

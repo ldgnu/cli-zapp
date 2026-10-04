@@ -1,4 +1,4 @@
-// Package layout computes the geometry of wterm's interface.
+// Package layout computes the geometry of cli-zapp's interface.
 //
 // # Why this is a separate package
 //
@@ -130,7 +130,7 @@ const (
 	ComposerHeight = 4
 	// StatusHeight is the context line and the key-hint bar.
 	StatusHeight = 1
-	// BrandHeight is the WTERM banner above the sidebar's search field.
+	// BrandHeight is the CLI-ZAPP banner above the sidebar's search field.
 	BrandHeight = 1
 	// SearchHeight is the search field in the sidebar.
 	SearchHeight = 1

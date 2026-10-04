@@ -1,7 +1,15 @@
 # Build artefacts.
 /bin/
 /dist/
-wterm
+
+# The built binary, anchored to the repository root.
+#
+# This must stay anchored. A bare `cli-zapp` pattern matches any file or
+# directory of that name at any depth — including `cmd/cli-zapp/` — which is
+# how the program's entry point went untracked and the committed tree stopped
+# building. A gitignore pattern that is meant for one artefact must say where
+# it is.
+#/cli-zapp
 
 # Test and coverage output.
 coverage.out
@@ -14,7 +22,7 @@ coverage.html
 
 # Local configuration and secrets. The linked session lives in the system
 # keyring, but a stray config must never be committed.
-/wterm.toml
+/cli-zapp.toml
 /.env
 *.key
 

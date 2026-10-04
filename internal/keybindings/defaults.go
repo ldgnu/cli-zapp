@@ -1,6 +1,6 @@
 package keybindings
 
-// Defaults returns wterm's standard bindings.
+// Defaults returns cli-zapp's standard bindings.
 //
 // The layout follows the i3wm vocabulary the application is designed around:
 // "mod" means ctrl, hjkl navigate, and the modifier-free keys stay free for

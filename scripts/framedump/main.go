@@ -1,4 +1,4 @@
-// Command framedump renders wterm's interface at a given size and prints it.
+// Command framedump renders cli-zapp's interface at a given size and prints it.
 //
 // # Why this exists
 //
@@ -37,9 +37,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/ui/app"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/ui/app"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // debug turns on a trace of every message the driver settles, for working out why a

@@ -1,4 +1,4 @@
-// Package app is wterm's root Bubble Tea model.
+// Package app is cli-zapp's root Bubble Tea model.
 //
 // # The root owns decisions, regions own pixels
 //
@@ -39,20 +39,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/notifications"
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/component"
-	"github.com/wterm/wterm/internal/ui/components/composer"
-	"github.com/wterm/wterm/internal/ui/components/overlay"
-	"github.com/wterm/wterm/internal/ui/components/palette"
-	"github.com/wterm/wterm/internal/ui/components/sidebar"
-	"github.com/wterm/wterm/internal/ui/components/statusbar"
-	"github.com/wterm/wterm/internal/ui/components/transcript"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
-	"github.com/wterm/wterm/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/notifications"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/component"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/composer"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/overlay"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/palette"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/sidebar"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/statusbar"
+	"github.com/cli-zapp/cli-zapp/internal/ui/components/transcript"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
 // Model is the root model.

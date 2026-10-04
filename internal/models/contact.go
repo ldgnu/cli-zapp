@@ -39,7 +39,7 @@ func (p PresenceState) String() string {
 // Presence is a contact's availability.
 //
 // The distinction between [PresenceUnknown] and [PresenceUnavailable] matters:
-// the first means wterm cannot know, the second means the contact is actually
+// the first means cli-zapp cannot know, the second means the contact is actually
 // offline. Collapsing them would tell users something untrue.
 type Presence struct {
 	ContactID ContactID
@@ -73,7 +73,7 @@ func (p Presence) Label() string {
 	}
 }
 
-// Contact is a WhatsApp account as wterm models it.
+// Contact is a WhatsApp account as cli-zapp models it.
 type Contact struct {
 	ID ContactID
 

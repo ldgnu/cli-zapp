@@ -15,7 +15,7 @@ below that resolves a conflict says which one won.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│ WTERM                    │Ada Lovelace                                           ● en línea  │
+│ CLI-ZAPP                    │Ada Lovelace                                           ● en línea  │
 │──────────────────────────│─────────────────────────────────────────────────────────────────  │
 │⌕ Buscar chats…           │ They did. I started on the Bernoulli table this                   │
 │──────────────────────────│ morning.                                                          │

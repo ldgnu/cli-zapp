@@ -42,7 +42,7 @@ func TestNilLoggerIsSafe(t *testing.T) {
 }
 
 func TestNewWritesToTheGivenFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wterm.log")
+	path := filepath.Join(t.TempDir(), "cli-zapp.log")
 
 	l, closeLog, err := New(Options{Verbose: true, File: path})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestNewWritesToTheGivenFile(t *testing.T) {
 func TestLogFileIsNotWorldReadable(t *testing.T) {
 	// The log holds protocol diagnostics and message metadata, which on a shared
 	// machine must not be readable by other users.
-	path := filepath.Join(t.TempDir(), "wterm.log")
+	path := filepath.Join(t.TempDir(), "cli-zapp.log")
 
 	l, closeLog, err := New(Options{Debug: true, File: path})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestTemporaryFileIsUsedByDefault(t *testing.T) {
 	if path == "" {
 		t.Fatal("expected a temporary log file path")
 	}
-	if !strings.Contains(path, "wterm-") {
+	if !strings.Contains(path, "cli-zapp-") {
 		t.Errorf("unexpected temporary path %q", path)
 	}
 
@@ -115,7 +115,7 @@ func TestTemporaryFileIsUsedByDefault(t *testing.T) {
 func TestUnopenableFileIsReported(t *testing.T) {
 	// A path that cannot be opened is an error the user deserves to hear about,
 	// rather than a silent no-op.
-	if _, _, err := New(Options{File: "/nonexistent-directory/wterm.log"}); err == nil {
+	if _, _, err := New(Options{File: "/nonexistent-directory/cli-zapp.log"}); err == nil {
 		t.Error("expected an error for an unopenable path")
 	}
 }
@@ -145,7 +145,7 @@ func TestLevelSelection(t *testing.T) {
 func TestDefaultLevelSuppressesInfo(t *testing.T) {
 	// Without --debug or --verbose, informational output must not reach the file,
 	// or the "opt-in" promise is a lie.
-	path := filepath.Join(t.TempDir(), "wterm.log")
+	path := filepath.Join(t.TempDir(), "cli-zapp.log")
 
 	l, closeLog, err := New(Options{File: path})
 	if err != nil {
@@ -168,15 +168,15 @@ func TestDefaultLevelSuppressesInfo(t *testing.T) {
 }
 
 func TestDefaultPath(t *testing.T) {
-	path, err := DefaultPath("wterm.db")
+	path, err := DefaultPath("cli-zapp.db")
 	if err != nil {
 		t.Skipf("no config directory available: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join("wterm", "wterm.db")) {
+	if !strings.HasSuffix(path, filepath.Join("cli-zapp", "cli-zapp.db")) {
 		t.Errorf("DefaultPath = %q", path)
 	}
-	if filepath.Base(filepath.Dir(path)) != "wterm" {
-		t.Errorf("expected wterm's own subdirectory, got %q", path)
+	if filepath.Base(filepath.Dir(path)) != "cli-zapp" {
+		t.Errorf("expected cli-zapp's own subdirectory, got %q", path)
 	}
 }
 

@@ -11,7 +11,7 @@ See [UX.md](UX.md) for the interface decisions and their reasoning, and
 ## The dependency rule
 
 ```
-cmd/wterm                composition root: flags, theme, services, wiring
+cmd/cli-zapp                composition root: flags, theme, services, wiring
 
 scripts/                 development tools; not part of the binary
   framedump/               prints one frame, exactly as the renderer sends it
@@ -25,7 +25,7 @@ internal/ui              ← imports models, keybindings, text, theme, whatsapp
   app/                      the root model: composition, routing, dispatch
 internal/whatsapp       interfaces + the in-memory fake
   adapter/                ← the ONLY package importing go.mau.fi/whatsmeow
-internal/models         domain types; imports nothing from wterm
+internal/models         domain types; imports nothing from cli-zapp
 internal/keybindings    actions and keys; no Bubble Tea
 internal/text           terminal measurement, wrapping, ANSI safety
 internal/storage        SQLite
@@ -258,7 +258,7 @@ caught by a test that renders at 24 columns while the theme says 30.
 
 Both palettes are derived from WhatsApp's own colours, tuned for legibility on
 light and dark terminal themes rather than matching the web app pixel for pixel,
-since the terminal's background is out of wterm's control. There is deliberately
+since the terminal's background is out of cli-zapp's control. There is deliberately
 no `Background` field: overriding the user's terminal colours is a nuisance, not a
 feature.
 

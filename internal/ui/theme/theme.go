@@ -1,4 +1,4 @@
-// Package theme holds wterm's visual vocabulary: colours, spacing and glyphs.
+// Package theme holds cli-zapp's visual vocabulary: colours, spacing and glyphs.
 //
 // # Why this is a package and not a file of constants
 //
@@ -27,7 +27,7 @@
 // WhatsApp's palette is the reference: green accent, dark teal surfaces. The
 // exact values are tuned for legibility on light and dark terminal themes
 // rather than matching the web app pixel for pixel, since the terminal's
-// background is outside wterm's control.
+// background is outside cli-zapp's control.
 package theme
 
 import "image/color"
@@ -170,7 +170,7 @@ func DarkPalette() Palette {
 
 // LightPalette returns the palette for light terminal backgrounds.
 //
-// Selected explicitly via configuration. wterm does not try to infer the
+// Selected explicitly via configuration. cli-zapp does not try to infer the
 // terminal's background from escape sequences: doing so reliably is not
 // possible without querying the terminal, which costs a round trip and is not
 // worth it for a scheme that degrades gracefully either way.
@@ -428,7 +428,7 @@ func New(p Palette, m Metrics, g Glyphs) Theme {
 	if !m.Validate() {
 		m = DefaultMetrics()
 	}
-	t := Theme{Name: NameDark, Palette: p, Metrics: m, Glyphs: g, Brand: "WTERM"}
+	t := Theme{Name: NameDark, Palette: p, Metrics: m, Glyphs: g, Brand: "CLI-ZAPP"}
 	t.Styles = buildStyles(t)
 	return t
 }

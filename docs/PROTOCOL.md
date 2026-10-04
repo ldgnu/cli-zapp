@@ -1,6 +1,6 @@
 # Protocol
 
-How wterm talks to WhatsApp, and why this way. Written before implementation, as
+How cli-zapp talks to WhatsApp, and why this way. Written before implementation, as
 the brief required; verified against the library's source rather than its README.
 
 ## The constraint
@@ -66,16 +66,16 @@ that boundary real before there is anything behind it: the entire interface is
 built and tested against `whatsapp.Fake` with the protocol absent from the
 dependency graph.
 
-### The device store and wterm's own database
+### The device store and cli-zapp's own database
 
 Two stores, deliberately separate:
 
 - **whatsmeow's** holds cryptographic material: identity keys, prekeys, session
   state. Its schema is the library's to own, and it must be readable by it.
-- **wterm's** holds application state: message cache, chat metadata, UI state,
+- **cli-zapp's** holds application state: message cache, chat metadata, UI state,
   configuration.
 
-Merging them would couple wterm's migrations to an upstream schema that changes
+Merging them would couple cli-zapp's migrations to an upstream schema that changes
 with protocol updates. Credentials go to the **system keyring** where one is
 available; the device store holds only what the library needs, `0600`.
 

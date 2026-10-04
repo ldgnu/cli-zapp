@@ -1,9 +1,9 @@
-// Package models defines wterm's internal domain types.
+// Package models defines cli-zapp's internal domain types.
 //
 // # Layering contract
 //
 // This package is the vocabulary of the application. It sits at the bottom of
-// the dependency graph and imports nothing from wterm. Specifically it must
+// the dependency graph and imports nothing from cli-zapp. Specifically it must
 // never import:
 //
 //   - internal/whatsapp (or go.mau.fi/whatsmeow) — protocol details

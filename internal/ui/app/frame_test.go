@@ -7,11 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/wterm/wterm/internal/keybindings"
-	"github.com/wterm/wterm/internal/models"
-	"github.com/wterm/wterm/internal/text"
-	"github.com/wterm/wterm/internal/ui/layout"
-	"github.com/wterm/wterm/internal/ui/theme"
+	"github.com/cli-zapp/cli-zapp/internal/keybindings"
+	"github.com/cli-zapp/cli-zapp/internal/models"
+	"github.com/cli-zapp/cli-zapp/internal/text"
+	"github.com/cli-zapp/cli-zapp/internal/ui/layout"
+	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 )
 
 // newModel builds a model over demo data with timers off.
@@ -143,7 +143,7 @@ func TestFullLayoutShowsSidebarConversationAndStatus(t *testing.T) {
 	l := layout.Compute(120, 30)
 
 	// The brand banner is in the sidebar's first row.
-	if !strings.Contains(lines[0], "WTERM") {
+	if !strings.Contains(lines[0], "CLI-ZAPP") {
 		t.Errorf("row 0 should carry the wordmark, got %q", lines[0])
 	}
 	// The search field sits under it.
@@ -179,7 +179,7 @@ func TestMinimalLayoutDropsTheSidebarButKeepsTheComposer(t *testing.T) {
 	lines := frame(m)
 	body := strings.Join(lines, "\n")
 
-	if strings.Contains(body, "WTERM") {
+	if strings.Contains(body, "CLI-ZAPP") {
 		t.Error("minimal mode should not draw the wordmark")
 	}
 	if !strings.Contains(body, "Escribir mensaje") {
@@ -253,7 +253,7 @@ func TestEscapeReturnsToTheSidebar(t *testing.T) {
 	send(m, tea.KeyPressMsg{Code: tea.KeyUp, Text: "k", Mod: tea.ModCtrl})
 	send(m, ctrlKey('h'))
 	body := strings.Join(frame(m), "\n")
-	if !strings.Contains(body, "WTERM") {
+	if !strings.Contains(body, "CLI-ZAPP") {
 		t.Error("the sidebar should be back")
 	}
 }
@@ -421,7 +421,7 @@ func TestOverlaysAreLayeredNotReplacing(t *testing.T) {
 	}
 	// The sidebar is behind the dialog, and the dialog is narrower than the terminal,
 	// so the sidebar's content must survive on the rows the dialog does not cover.
-	if !strings.Contains(withOverlay, "WTERM") {
+	if !strings.Contains(withOverlay, "CLI-ZAPP") {
 		t.Error("a centred dialog must not erase the sidebar")
 	}
 }
