@@ -1,0 +1,26 @@
+# Build artefacts.
+/bin/
+/dist/
+wterm
+
+# Test and coverage output.
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Vendor directory is committed deliberately for reproducible builds; see
+# docs/ARCHITECTURE.md. It is not ignored.
+
+# Local configuration and secrets. The linked session lives in the system
+# keyring, but a stray config must never be committed.
+/wterm.toml
+/.env
+*.key
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

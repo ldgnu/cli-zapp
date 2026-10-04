@@ -1,0 +1,145 @@
+# golangci-lint configuration for wterm.
+#
+# # Why this set
+#
+# The linters here are the ones that catch defects this codebase is actually
+# exposed to: a TUI measures text by cells rather than bytes, composites escape
+# sequences, and shares state between a sync goroutine and the render loop. Each
+# enabled linter below maps to one of those.
+#
+# Deliberately absent: a whitespace linter. gofmt already owns whitespace, and a
+# second opinion on blank lines produced ~950 findings on a codebase that was
+# already gofmt-clean. A linter whose output cannot be acted on gets switched off
+# within a week, and a switched-off linter catches nothing — so it is not
+# configured at all.
+
+version: "2"
+
+run:
+  timeout: 5m
+  # Tests are included so that test helpers are held to the same standard.
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    # Correctness.
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - exhaustive
+    - gocheckcompilerdirectives
+    - gosec
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+    # Conventions this codebase depends on.
+    - godot
+    - lll
+    - prealloc
+    - revive
+
+  settings:
+    # Comments end in a period. Prose that reads as prose is easier to review than
+    # fragments; declarative comments (doc links, directives) are exempt.
+    godot:
+      scope: declarations
+      capital: false
+
+    lll:
+      # 100 columns is the practical limit for a comment-heavy codebase; the
+      # default of 120 admits lines that wrap awkwardly in most editors.
+      line-length: 100
+
+    exhaustive:
+      # An enum with a documented zero value must handle it explicitly rather than
+      # relying on a default, so the zero case is *not* treated as exhaustive.
+      default-signifies-exhaustive: true
+
+    misspell:
+      # UK spelling, matching the prose throughout the codebase ("recognised",
+      # "behaviour"). Mixed spelling within one codebase is worse than either
+      # convention, so the linter is pointed at the one actually in use.
+      locale: UK
+
+    prealloc:
+      simple: true
+      range-loops: true
+
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-naming
+        - name: error-strings
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: var-declaration
+
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Words whose spelling is fixed by something other than prose.
+      #
+      # "color" here means the Go type image/color and the conventional terminal
+      # flag --color, both of which are US English by definition; "Sanitize" matches
+      # encoding/json. Only prose follows the UK locale above. misspell cannot tell
+      # a technical term from a spelling disagreement, so these are excluded rather
+      # than renamed: renaming an exported API to satisfy a prose linter would make
+      # wterm's vocabulary inconsistent with the ecosystem it plugs into.
+      - linters:
+          - misspell
+        text: "(?i)\\bcolou?r\\b"
+      - linters:
+          - misspell
+        text: "Sanitize|Sanitise|sanitise|sanitized"
+      # A test may legitimately assert on an error it just created, and the
+      # gosec rules about file permissions do not apply to a temporary directory.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - dupl
+      # main wires the application together; the binary's exit code is run()'s job.
+      - path: cmd/wterm/main\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      # Rewrite short if-else bodies onto one line, which this codebase uses
+      # deliberately for trivial branches.
+      extra:
+        rules:
+          group-params: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-dirs-use-default: false
