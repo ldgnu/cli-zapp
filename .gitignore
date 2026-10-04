@@ -5,11 +5,23 @@
 # The built binary, anchored to the repository root.
 #
 # This must stay anchored. A bare `cli-zapp` pattern matches any file or
-# directory of that name at any depth — including `cmd/cli-zapp/` — which is
-# how the program's entry point went untracked and the committed tree stopped
-# building. A gitignore pattern that is meant for one artefact must say where
-# it is.
+# directory of that name at any depth — including `cmd/cli-zapp/` — which
+# is how the program's entry point went untracked and the committed tree
+# stopped building. A gitignore pattern that is meant for one artefact must
+# say where it is.
 #/cli-zapp
+
+# makepkg's scratch trees.
+#
+# These appear only if makepkg is run from inside the checkout rather than from the
+# copy that scripts/mkarch.sh makes. They are ignored *and* mkarch.sh avoids
+# creating them, because makepkg leaves $pkgdir mode 0711 when a build fails
+# partway — and `go build ./...` walks this whole tree, so one failed package build
+# would otherwise leave the Go toolchain unable to read its own module.
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/*.pkg.tar.*
+/packaging/arch/*.sig
 
 # Test and coverage output.
 coverage.out
@@ -17,14 +29,30 @@ coverage.html
 *.test
 *.prof
 
-# Vendor directory is committed deliberately for reproducible builds; see
-# docs/ARCHITECTURE.md. It is not ignored.
+# Backups produced by scripts/backup.sh. They contain a full git bundle and must
+# never be committed or uploaded alongside the source they came from.
+*.tar.zst
+*.tar.zst.sha256
+*.tar.gz.sha256
+
+# Dependencies are NOT vendored. The comment that used to claim otherwise was
+# wrong and cost a reader time: there is no vendor/ directory, and go.sum pins the
+# module graph, which is what makes the build reproducible. Run `go mod vendor`
+# explicitly if a future change wants that.
 
 # Local configuration and secrets. The linked session lives in the system
 # keyring, but a stray config must never be committed.
 /cli-zapp.toml
 /.env
 *.key
+
+# Runtime data. Nothing here belongs in version control: these are per-user
+# session databases and logs, and a committed one is a credential leak.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
 
 # Editor and OS noise.
 .DS_Store

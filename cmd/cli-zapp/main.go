@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,8 +23,16 @@ import (
 	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
+// Build metadata, injected at link time with -ldflags "-X main.<name>=...".
+//
+// All three have a working default so that `go run` and `go build ./...` without
+// -ldflags still produce a binary that answers --version honestly rather than
+// printing nothing.
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
 
 // config is the runtime configuration, assembled from flags.
 type config struct {
@@ -42,6 +51,9 @@ type config struct {
 	glyphs   string
 	ascii    bool
 	showHelp bool
+
+	// showVersion prints build metadata and exits.
+	showVersion bool
 }
 
 func main() {
@@ -144,6 +156,7 @@ func parseFlags() config {
 
 	fs.BoolVar(&cfg.demo, "demo", true, "run against in-memory demo data")
 	fs.BoolVar(&cfg.showHelp, "help-keys", false, "print the default keybindings and exit")
+	fs.BoolVar(&cfg.showVersion, "version", false, "print version information and exit")
 
 	fs.StringVar(&cfg.color, "color", "dark", "color scheme: dark or light")
 	fs.StringVar(&cfg.glyphs, "glyphs", "unicode", "glyph set: unicode or ascii")
@@ -159,6 +172,15 @@ func parseFlags() config {
 		// ContinueOnError already printed the problem; exiting 0 here would be
 		// wrong for a bad flag, so the caller sees the usage text and exits 1.
 		os.Exit(2)
+	}
+
+	// --version is checked before the interface starts, and before the log file is
+	// opened, so that asking a binary what it is never creates a log file as a side
+	// effect. A `cli-zapp --version` that leaves a temp file behind is the kind of
+	// thing that makes people distrust the rest of the tooling.
+	if cfg.showVersion {
+		printVersion()
+		os.Exit(0)
 	}
 
 	if cfg.showHelp {
@@ -195,6 +217,19 @@ func buildTheme(cfg config) (theme.Theme, error) {
 	}
 
 	return t, nil
+}
+
+// printVersion writes the build metadata.
+//
+// The format is one `key: value` per line rather than a single line, because
+// `cli-zapp --version | grep` and `dpkg -s` both want to pick a field out of it,
+// and a release page wants to paste it into a bug report verbatim.
+func printVersion() {
+	fmt.Printf("cli-zapp %s\n", version)
+	fmt.Printf("  commit:     %s\n", commit)
+	fmt.Printf("  built:      %s\n", buildDate)
+	fmt.Printf("  go:         %s\n", runtime.Version())
+	fmt.Printf("  platform:   %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
 // printKeybindings writes the default bindings to stdout.

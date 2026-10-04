@@ -1,0 +1,241 @@
+name: Release
+
+# Triggered by pushing a version tag. Nothing here runs on a normal push, so a
+# mistake in a commit cannot produce a release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+# One release per tag. Two concurrent runs for the same tag would race to upload
+# assets, and the resulting release would have a half-overwritten set of files.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Gate: the release is not built from a tag that does not pass the same checks CI
+  # runs. A tag is just a commit, and nothing stops it pointing at a broken one.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The history is needed for `git describe`, which is where VERSION comes from.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      - name: Test with the race detector
+        run: make test
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.14.0
+
+      - name: Smoke test on a real pty
+        run: make pty
+
+  build:
+    # Both architectures build in one job. Splitting them would mean two jobs racing
+    # to create the same checksums.txt, and a release whose checksums cover only one
+    # of its archives is worse than no checksums at all.
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Derive the release version from the tag
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::$tag is not a SemVer tag (expected vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          # SOURCE_DATE_EPOCH pins every timestamp in every archive, so two runs of
+          # this workflow for the same tag produce the same bytes.
+          epoch="$(git log -1 --format=%ct)"
+          {
+            echo "version=$version"
+            echo "epoch=$epoch"
+            echo "build_date=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (epoch $epoch)"
+
+      - name: Linux amd64 and arm64 binaries
+        env:
+          # Overridden so the embedded version is the tag, not git describe's
+          # opinion of an untagged checkout.
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.meta.outputs.build_date }}
+          SOURCE_DATE_EPOCH: ${{ steps.meta.outputs.epoch }}
+        run: make release
+
+      - name: Debian packages
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.meta.outputs.build_date }}
+          SOURCE_DATE_EPOCH: ${{ steps.meta.outputs.epoch }}
+        run: make package-deb
+
+      - name: Arch package
+        # ubuntu-latest, not Arch. mkarch.sh falls back to direct construction when
+        # makepkg is absent, which is why the tarball, the .debs and the Arch package
+        # can all be produced in one job.
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.meta.outputs.build_date }}
+          SOURCE_DATE_EPOCH: ${{ steps.meta.outputs.epoch }}
+        run: make package-arch
+
+      - name: Checksums
+        run: make checksums
+
+      - name: Verify the artifacts
+        run: |
+          set -euo pipefail
+          ls -la dist/
+          echo "--- checksums ---"
+          cat dist/checksums.txt
+          # Every archive the release advertises must actually exist.
+          for f in \
+            "dist/cli-zapp-linux-amd64.tar.gz" \
+            "dist/cli-zapp-linux-arm64.tar.gz" \
+            "dist/cli-zapp-${{ steps.meta.outputs.version }}_amd64.deb" \
+            "dist/cli-zapp-${{ steps.meta.outputs.version }}_arm64.deb" \
+            "dist/cli-zapp-${{ steps.meta.outputs.version }}-1-x86_64.pkg.tar.zst"
+          do
+            [ -f "$f" ] || { echo "::error::missing expected artifact $f"; exit 1; }
+          done
+          # The arm64 binary must really be arm64. A cross-build that silently
+          # produced amd64 would ship a release that does not work on the platform
+          # it is named for.
+          mkdir -p /tmp/v && tar xzf dist/cli-zapp-linux-arm64.tar.gz -C /tmp/v
+          file /tmp/v/*/cli-zapp | grep -q 'aarch64' \
+            || { echo "::error::arm64 archive does not contain an aarch64 binary"; exit 1; }
+          # --version must work from the packaged binary, not just from a local build.
+          /tmp/v/*/cli-zapp --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          retention-days: 7
+
+  # The Arch package is validated by makepkg on a real Arch runner. Building it on
+  # ubuntu-latest above only proves the fallback path; this proves the PKGBUILD, which
+  # is the thing an AUR maintainer will actually run.
+  arch-package:
+    needs: verify
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: pacman -S --noconfirm go git tar zstd
+
+      - name: Build the PKGBUILD with makepkg
+        run: |
+          set -euo pipefail
+          cd packaging/arch
+          makepkg \
+            --noconfirm \
+            --cleanbuild \
+            --clean \
+            --holdver \
+            --noprogressbar \
+            env "SRC_DIR=$GITHUB_WORKSPACE" "PKGVER_OVERRIDE=0.0.0"
+          ls -la ./*.pkg.tar.zst
+
+  publish:
+    needs: [build, arch-package]
+    runs-on: ubuntu-latest
+    # Only the tag's own ref can publish, so a workflow run from a fork cannot
+    # create a release in the upstream repository.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+
+      - name: Write release notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "# cli-zapp $version"
+            echo
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "# Arch Linux"
+            echo "sudo pacman -U cli-zapp-$version-1-x86_64.pkg.tar.zst"
+            echo
+            echo "# Debian / Ubuntu"
+            echo "sudo apt install ./cli-zapp_${version}_amd64.deb"
+            echo
+            echo "# Binary"
+            echo "tar xzf cli-zapp-linux-amd64.tar.gz && sudo install -m755 \\"
+            echo "  cli-zapp-linux-amd64/cli-zapp /usr/local/bin/"
+            echo '```'
+            echo
+            echo "## Verify"
+            echo
+            echo '```sh'
+            echo "sha256sum -c checksums.txt"
+            echo '```'
+            echo
+            echo "## A note before you link an account"
+            echo
+            echo "This client speaks an unofficial protocol and violates WhatsApp's"
+            echo "Terms of Service. Linking an account carries a real risk of a"
+            echo "temporary or permanent ban. Use a secondary number. See SECURITY.md."
+          } > dist/RELEASE_NOTES.md
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: cli-zapp ${{ github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/cli-zapp-linux-amd64.tar.gz
+            dist/cli-zapp-linux-arm64.tar.gz
+            dist/*.deb
+            dist/*.pkg.tar.zst
+            dist/checksums.txt
+
+      # Deliberately absent: publishing to the AUR. An AUR push is a publication, and
+      # it is a human decision. The PKGBUILD is validated above and is ready to copy.

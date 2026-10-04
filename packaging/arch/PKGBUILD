@@ -1,0 +1,112 @@
+# Maintainer: cli-zapp maintainers <maintainers@cli-zapp.invalid>
+#
+# Packaging recipe for cli-zapp on Arch Linux.
+#
+# To build:
+#     make package-arch
+#
+# or, from this directory:
+#     makepkg -si
+#
+# To publish to the AUR: copy this file and the .install file to a repository and
+# bump pkgver. Nothing here publishes automatically, on purpose — an AUR push is a
+# publication and should be a human decision.
+
+pkgname=cli-zapp
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Keyboard-driven WhatsApp client for the terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ldgnu/cli-zapp"
+license=('MIT')
+# No hard dependency on a clipboard helper: the program reports that it could not
+# find one rather than failing to start. Making wl-clipboard a dependency would
+# pull a Wayland library onto machines that only have X11.
+depends=()
+optdepends=(
+  'wl-clipboard: copy and paste on Wayland'
+  'xclip: copy and paste on X11'
+  'xsel: copy and paste on X11 (alternative)'
+  'libnotify: desktop notifications'
+)
+makedepends=('go')
+provides=("$pkgname")
+# No replaces/conflicts: this package owns only /usr/bin/cli-zapp and its docs, and
+# nothing else in the repositories claims that name.
+
+# A release tarball is the source for an AUR build. A local build from a checkout
+# has no tarball and sets SRC_DIR instead, so `source` is empty rather than pointing
+# at a file that does not exist — which is the difference between "builds from
+# source" and "fails asking for a download".
+: "${SRC_DIR:=}"
+if [ -z "$SRC_DIR" ]; then
+	source=("$pkgname-$pkgver.tar.gz")
+	sha256sums=('SKIP')
+else
+	source=()
+	sha256sums=()
+fi
+
+# `make package-arch` passes the release version in, so a locally built package and
+# a tagged release carry the same pkgver.
+if [ -n "${PKGVER_OVERRIDE:-}" ]; then
+	pkgver="$PKGVER_OVERRIDE"
+fi
+
+# The tree the sources live in.
+#
+# makepkg runs build/check/package with the working directory set to $srcdir, where
+# the *extracted* sources are — but a local build has no tarball, so the sources are
+# the checkout at $SRC_DIR. Referring to $srcdir unconditionally is why a from-source
+# build dies in package() with "LICENSE: No such file or directory": the binary is in
+# $srcdir because build() put it there, and nothing else is.
+src_root() {
+	if [ -n "$SRC_DIR" ]; then
+		printf '%s' "$SRC_DIR"
+	else
+		printf '%s' "$srcdir"
+	fi
+}
+
+build() {
+	cd "$(src_root)"
+
+	# The recipe is version-independent: one PKGBUILD serves every release, and
+	# pkgver comes from the tag. That is what stops a new release needing a new
+	# PKGBUILD commit.
+	#
+	# CGO_ENABLED=0 because the binary is then static and runs on any Linux of the
+	# same architecture with no libc version to match.
+	CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+		-ldflags "-s -w -X main.version=$pkgver-$pkgrel" \
+		-o "$srcdir/usr/bin/$pkgname" \
+		./cmd/$pkgname
+}
+
+check() {
+	cd "$(src_root)"
+	# Scoped to the Go packages rather than ./...: makepkg's own scratch trees can
+	# sit inside this directory during a local build, and walking them finds nothing
+	# while finding permission errors.
+	go vet ./cmd/... ./internal/... ./scripts/...
+}
+
+package() {
+	local root
+	root=$(src_root)
+
+	install -Dm755 "$srcdir/usr/bin/$pkgname" "$pkgdir/usr/bin/$pkgname"
+	install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 "$root/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+	# docs/ is copied rather than installed file by file: a glob that matches
+	# nothing makes makepkg fail the build, and docs/ is expected but not required.
+	if [[ -d "$root/docs" ]]; then
+		cp -r "$root/docs" "$pkgdir/usr/share/doc/$pkgname/docs"
+		find "$pkgdir/usr/share/doc/$pkgname/docs" -type f -exec chmod 0644 {} +
+	fi
+
+	# No post_install hook. The program writes nothing outside the user's home and
+	# needs no daemon, so there is nothing to do after installation that a user
+	# could not do themselves.
+}

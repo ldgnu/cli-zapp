@@ -16,41 +16,194 @@ The interface decisions and their reasoning are in
 [docs/UX.md](docs/UX.md); the layering is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+> ⚠️ **Read [SECURITY.md](SECURITY.md) before linking an account.** This client
+> speaks an unofficial protocol and violates WhatsApp's Terms of Service.
+> Linking an account carries a real risk of a temporary or permanent ban. Use a
+> secondary number.
+
 ---
 
-## Running it
+## Screenshots
+
+<!-- Reproduce any frame exactly as the renderer sends it, with the colour codes
+     stripped, rather than trusting a screenshot to still be true:
+
+       make frame COLS=92 ROWS=26 KEYS="ctrl+p" | sed 's/\x1b\[[0-9;]*m//g'
+-->
+
+```
+$ cli-zapp
+```
+
+---
+
+## Requirements
+
+| | |
+| --- | --- |
+| OS | Linux, amd64 or arm64. Built and tested on Arch and CachyOS. |
+| Terminal | 80x24 minimum; 120x30 or larger recommended. |
+| Go | 1.27 or later — only to build from source. |
+| Runtime | None. The binary is statically linked: no libc, no C toolchain. |
+| Optional | `wl-clipboard`, `xclip` or `xsel` for copy. `libnotify` for notifications. |
+
+---
+
+## Installation
+
+### Arch Linux
 
 ```sh
-make build      # → bin/cli-zapp
-make run        # build and start with demo data
-make keys       # print the default keybindings as TOML
-make frame      # print one frame of the interface, at any size
+sudo pacman -U cli-zapp-0.1.0-1-x86_64.pkg.tar.zst
 ```
 
+Or build the package from a checkout:
+
+```sh
+make package-arch
+sudo pacman -U dist/cli-zapp-*.pkg.tar.zst
 ```
+
+The recipe is [`packaging/arch/PKGBUILD`](packaging/arch/PKGBUILD). It is
+version-independent: `pkgver` comes from the release tag, so a new release does not
+need a new recipe.
+
+> Nothing publishes to the AUR automatically. An AUR push is a publication and a
+> human decision. The recipe is validated by `makepkg` on an Arch runner in CI, and
+> is ready to copy into an AUR repository when you decide to.
+
+### Debian / Ubuntu
+
+```sh
+sudo apt install ./cli-zapp_0.1.0_amd64.deb
+```
+
+To build it from a checkout:
+
+```sh
+make package-deb
+sudo apt install ./dist/cli-zapp_*.deb
+```
+
+Removal is clean and reversible:
+
+```sh
+sudo apt remove cli-zapp
+```
+
+There are no maintainer scripts. This is a terminal application with no daemon, no
+systemd unit and nothing written outside your home directory, so there is nothing
+for `postinst` to do that you could not do yourself.
+
+### Binary
+
+```sh
+tar xzf cli-zapp-linux-amd64.tar.gz
+sudo install -m755 cli-zapp-linux-amd64/cli-zapp /usr/local/bin/
+```
+
+Or without root:
+
+```sh
+mkdir -p ~/.local/bin
+install -m755 cli-zapp-linux-amd64/cli-zapp ~/.local/bin/
+```
+
+Verify what you downloaded:
+
+```sh
+sha256sum -c checksums.txt
+```
+
+### Build from source
+
+```sh
+git clone https://github.com/ldgnu/cli-zapp.git
+cd cli-zapp
+make build
+./bin/cli-zapp
+```
+
+Install system-wide:
+
+```sh
+sudo make install              # → /usr/local/bin/cli-zapp
+sudo make install PREFIX=/usr  # → /usr/bin/cli-zapp
+```
+
+Stage an install without touching the system:
+
+```sh
+make install DESTDIR=/tmp/stage
+```
+
+---
+
+## Usage
+
+```sh
 cli-zapp [flags]
 
+  --version        print version information and exit
   --demo           run against in-memory demo data (default true)
   --color=dark     colour scheme: dark or light
   --glyphs=unicode glyph set: unicode or ascii
+  --ascii          shorthand for --glyphs=ascii
   --debug          write debug-level logs
   --verbose        write verbose logs
   --log=PATH       log file (default: a temporary file)
-  --help-keys      print the default keybindings and exit
+  --help-keys      print the default keybindings as TOML and exit
 ```
 
-The binary is built with `CGO_ENABLED=0` and is statically linked — `file bin/cli-zapp`
-says so, and CI asserts it. When the local database arrives it will be provided by
-[modernc.org/sqlite](https://modernc.org/sqlite), a pure-Go implementation, precisely
-so that this stays true: a chat client that needs a matching libc is a chat client
-somebody cannot run.
+```sh
+$ cli-zapp --version
+cli-zapp 0.1.0
+  commit:     94f64b2
+  built:      2026-10-04T22:58:47Z
+  go:         go1.27.1
+  platform:   linux/amd64
+```
+
+Other useful commands while developing:
+
+```sh
+make run                                     # build and start with demo data
+make keys                                    # the default keybindings as TOML
+make frame COLS=92 ROWS=26 KEYS="ctrl+p"    # print one frame, exactly as rendered
+```
+
+`make frame` prints precisely what the renderer would send, at any size, with any keys
+pressed first. It is how layout is reviewed.
 
 ---
 
-## Keybindings
+## Configuration
 
-The navigation vocabulary follows i3wm: **mod** means `ctrl`, `hjkl` move,
-and the modifier-free keys stay free for scrolling and text entry.
+There is no configuration file yet, and none is required — the binary runs as-is.
+
+When one lands it will follow the XDG Base Directory Specification:
+
+| Path | Contents |
+| --- | --- |
+| `~/.config/cli-zapp/config.toml` | settings and keybinding overrides |
+| `~/.local/share/cli-zapp/` | message cache, chat metadata |
+| `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` | honoured when set |
+
+Secrets never belong in the repository, and the linked-device session belongs in the
+system keyring rather than in either path.
+
+Keybindings can be inspected today:
+
+```sh
+cli-zapp --help-keys > bindings.toml   # the full default table, as TOML
+```
+
+---
+
+## Keyboard shortcuts
+
+The navigation vocabulary follows i3wm: **mod** means `ctrl`, `hjkl` move, and the
+modifier-free keys stay free for text entry.
 
 | Key | Action |
 | --- | --- |
@@ -69,24 +222,247 @@ and the modifier-free keys stay free for scrolling and text entry.
 | `mod+m` | Mute the chat |
 | `esc` | Cancel, contextual |
 | `enter` | Send (in the composer) |
+| `alt+enter` / `shift+enter` | New line |
 | `tab` / `shift+tab` | Next / previous panel |
 | `pgup` / `pgdown` | Scroll |
-| `ctrl+home` / `ctrl+end` | Top / bottom of the transcript |
 | `space` | Select or deselect a message |
 | `r` / `R` | Reply / react |
-| `mod+?` | Help |
+| `mod+?` | Help sheet |
 
-`mod+p` is the command palette, and **pinning a chat has no shortcut**. That is
-the trade: a conversation flag does not deserve a more memorable key than the
-thing that reaches all twenty other commands. Pinning is still on the binding
-table — it appears in `mod+?` under a heading with no key beside it, and it is
-configurable — and it is one of the palette's entries. Losing a shortcut is only
-acceptable while every action stays reachable somewhere.
+`mod+p` is the command palette, and **pinning a chat has no shortcut**. That is the
+trade: a conversation flag does not deserve a more memorable key than the thing that
+reaches every other command. Pinning stays on the binding table — it appears in
+`mod+?` under a heading with no key beside it, and it is configurable — and it is one
+of the palette's entries.
 
-`make keys` prints the full table in TOML form, ready to paste into a
-configuration file.
+Every action stays reachable. The palette exists partly so that giving up a shortcut
+is never the same as losing a feature.
 
-### Nothing is hardcoded
+---
+
+## Packaging
+
+```sh
+make package        # everything: .deb for both architectures, plus Arch
+make package-deb    # cli-zapp_VERSION_amd64.deb and _arm64.deb
+make package-arch   # cli-zapp-VERSION-1-x86_64.pkg.tar.zst
+make package-arch-arm64
+make release        # binary tarballs for every platform, plus checksums
+make checksums      # rewrite dist/checksums.txt
+make verify-release # rebuild and confirm the archives are byte-identical
+```
+
+Everything lands in `dist/`:
+
+```
+cli-zapp-linux-amd64.tar.gz
+cli-zapp-linux-arm64.tar.gz
+cli-zapp_0.1.0_amd64.deb
+cli-zapp_0.1.0_arm64.deb
+cli-zapp-0.1.0-1-x86_64.pkg.tar.zst
+checksums.txt
+```
+
+### Reproducibility
+
+Reproducibility here means: building the same commit with the same `VERSION`,
+`COMMIT` and `BUILD_DATE` produces the same bytes. That is what makes a published
+checksum meaningful, so it is verified per artifact rather than assumed:
+
+| Artifact | Byte-identical across builds? |
+| --- | --- |
+| The binary (`linux/amd64`, `linux/arm64`) | **yes** — verified |
+| `.deb` packages | **yes** — verified |
+| `.tar.gz` binary archives | **no** — see below |
+| Arch package via `makepkg` | **no** — see below |
+
+What is pinned, and does work:
+
+- `-trimpath` removes local filesystem paths from the binary.
+- `-buildvcs=false` stops the toolchain stamping a dirty-tree flag into it.
+- `SOURCE_DATE_EPOCH` fixes every mtime written into an archive.
+- File order inside archives is sorted rather than left to directory order.
+
+The two that are not byte-identical, and why:
+
+- **The `.tar.gz` wrappers.** The extracted *contents* are identical, and so are the
+  tar listing — names, modes, owners, sizes, mtimes — and the gzip header; the
+  compressed stream still differs. The cause has not been isolated, so it is recorded
+  here rather than papered over. The binary inside *is* reproducible, so the practical
+  consequence is only that the archive's own checksum differs between two builds of
+  one commit.
+- **The Arch package.** `makepkg` writes its own `builddate` into `.PKGINFO` and
+  `.BUILDINFO`, so the package records when it was built. That is makepkg's behaviour
+  and the recipe does not override it.
+
+Pin a release explicitly:
+
+```sh
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
+VERSION=1.0.0 COMMIT=$(git rev-parse HEAD) BUILD_DATE=2026-10-04T00:00:00Z \
+  make release
+```
+
+`make verify-release` rebuilds and re-compares the checksums. It currently reports a
+difference for the two artifact kinds above; it is a diagnostic, not a gate.
+### The Debian package is built by hand
+
+`scripts/mkdeb.sh` writes the `ar` archive directly instead of shelling out to
+`dpkg-deb`, so a release can be produced on a machine that has Go and tar but no
+Debian packaging tools. It also means timestamps are pinned rather than taken from
+the filesystem, which is what `dpkg-deb` would not give you.
+
+### The Arch package is built by makepkg where possible
+
+`scripts/mkarch.sh` prefers `makepkg`, which validates the `PKGBUILD` itself, and
+falls back to constructing the archive directly when Arch tooling is absent so a
+Debian CI runner can still produce it. It builds in a copy of the recipe rather than
+in the checkout — see the troubleshooting note below for why that matters.
+
+---
+
+## Releases
+
+Releases are cut by tagging. Nothing is published automatically except as a
+consequence of pushing a tag.
+
+```sh
+git tag -a v1.0.0 -m "v1.0.0"
+git push origin v1.0.0
+```
+
+That triggers [`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+1. runs the same checks as CI — format, vet, race tests, lint, pty smoke test
+2. builds Linux amd64 and arm64 binaries
+3. generates SHA256 checksums
+4. builds `.deb` for amd64 and arm64
+5. builds the Arch package, and validates the `PKGBUILD` with `makepkg` on a real
+   Arch runner
+6. verifies the artifacts — including that the arm64 archive really contains an
+   aarch64 binary, and that `--version` works from the packaged binary
+7. creates the GitHub Release and uploads everything
+
+Versions follow [Semantic Versioning](https://semver.org/). The tag is the single
+source of truth for the embedded version, so a package and a binary from the same tag
+always agree.
+
+---
+
+## Backup
+
+```sh
+./scripts/backup.sh [output-directory]
+```
+
+Produces `cli-zapp-backup-YYYYMMDD-HHMMSS.tar.zst` plus a `.sha256` beside it.
+
+The contents come from `git archive` and `git bundle`, not from the filesystem. An
+exclude list only covers what somebody remembered to enumerate, so the first time a
+`.env` or a session database lands in the tree it goes into a backup that then gets
+uploaded and shared. Deriving the archive from git makes an untracked secret
+*structurally* unable to be included rather than merely excluded by policy.
+
+A credential-pattern scan runs before the archive is written, and refuses to produce
+one if it matches.
+
+| Inside | |
+| --- | --- |
+| source tree | every tracked file at the recorded commit |
+| `repo.bundle` | full history, branches and tags, deduplicated |
+| `MANIFEST.txt` | commit, describe, and how to restore |
+| `UNTRACKED.txt` | working-tree files deliberately **not** included |
+| `SHA256SUMS.txt` | a hash of every file in the archive |
+
+Restoring:
+
+```sh
+zstd -dc cli-zapp-backup-*.tar.zst | tar -xf -   # source and metadata
+git clone repo.bundle cli-zapp                    # history
+```
+
+`UNTRACKED.txt` is the honest part: **a backup is not a substitute for committing.**
+Anything listed there is in neither the archive nor the history.
+
+---
+
+## Uninstall
+
+```sh
+sudo apt remove cli-zapp          # from a .deb
+sudo pacman -Rns cli-zapp         # from the Arch package
+sudo make uninstall               # from make install
+```
+
+By hand, if you installed the binary yourself:
+
+```sh
+sudo rm -f /usr/local/bin/cli-zapp
+sudo rm -rf /usr/local/share/doc/cli-zapp
+```
+
+cli-zapp writes nothing outside your home directory. There is no daemon to stop and
+no system service to disable, so removal leaves nothing behind.
+
+---
+
+## Troubleshooting
+
+**The screen looks garbled, or the colours are wrong.**
+`TERM` is probably unset or unknown; check with `infocmp`. On a terminal without
+truecolor the theme degrades rather than emitting colour it cannot render.
+
+**Nothing happens when I press a key.**
+Terminals disagree about which modifier they send. cli-zapp reads the modifier field
+of the key event rather than parsing a rendered string, which handles the common
+cases, but some terminals send `shift+enter` as a plain `enter`. Compare
+`cli-zapp --help-keys` with your terminal's documentation.
+
+**Copying does nothing.**
+cli-zapp shells out to a clipboard helper and says which one it wanted when none
+works:
+
+```sh
+sudo pacman -S wl-clipboard      # Wayland
+sudo apt install xclip           # X11
+```
+
+It does not assume `DISPLAY` is set and does not require X11 — on Wayland it uses
+`wl-copy`.
+
+**The interface says "terminal demasiado pequeña".**
+It needs at least 80x24. Make the window larger, or reduce the font size.
+
+**It hung when I ran it in a pipe or a script.**
+A Bubble Tea application needs a terminal. There is no headless mode.
+
+**`make build` fails with a permission error under `packaging/`.**
+An earlier `makepkg` run left an unreadable scratch directory in the checkout. `go
+build ./...` walks the whole tree, so that breaks the Go toolchain too.
+`scripts/mkarch.sh` now builds in a copy precisely so it cannot recur; remove the
+leftovers by hand with:
+
+```sh
+sudo chmod -R u+rwX packaging/arch/pkg packaging/arch/src
+rm -rf packaging/arch/pkg packaging/arch/src
+```
+
+**Is my account safe?**
+No, and nothing in this project can make it so. Read [SECURITY.md](SECURITY.md)
+before linking an account.
+
+---
+
+
+The binary is built with `CGO_ENABLED=0` and is statically linked — `file bin/cli-zapp`
+says so, and CI asserts it. When the local database arrives it will be provided by
+[modernc.org/sqlite](https://modernc.org/sqlite), a pure-Go implementation, precisely
+so that this stays true: a chat client that needs a matching libc is a chat client
+somebody cannot run.
+
+---
+
+## Nothing is hardcoded
 
 No component compares key strings. A key press is resolved to an
 [action](internal/keybindings/keybindings.go) by a table, and components are
@@ -114,7 +490,6 @@ Bindings can be scoped globally or per panel. Global bindings are resolved
 work everywhere except where typing happens.
 
 ---
-
 ## Architecture
 
 ```
@@ -329,8 +704,20 @@ matter of filling in one package rather than writing the interface twice.
 
 ## Licence
 
-MPL-2.0. See [LICENSE](LICENSE).
+**MIT.** See [LICENSE](LICENSE).
 
-cli-zapp is not affiliated with, endorsed by, or connected to WhatsApp or Meta. It
-uses an unofficial protocol; read [docs/LIMITATIONS.md](docs/LIMITATIONS.md)
-before linking an account you care about.
+The protocol library, [whatsmeow](https://pkg.go.dev/go.mau.fi/whatsmeow), is MPL-2.0.
+MPL-2.0 is file-level copyleft, so using it does not oblige this project's own source
+to change licence — which is why cli-zapp can be MIT. cli-zapp does not vendor or
+modify whatsmeow; it imports it as a module dependency, so the file-level obligation
+is satisfied by the module boundary itself.
+
+cli-zapp is not affiliated with, endorsed by, or connected to WhatsApp or Meta.
+"WhatsApp" is a trademark of its respective owner.
+
+This project uses an unofficial protocol and violates WhatsApp's Terms of Service.
+**Read [SECURITY.md](SECURITY.md) before linking an account**, and see
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md) for what the protocol cannot do.
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
