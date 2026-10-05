@@ -188,6 +188,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.inputs.ref || github.ref }}
 
+      - name: Install build tools
+        # -Sy first: a fresh container has empty package databases, so `pacman -S`
+        # fails with "target not found" for every package, including ones that plainly
+        # exist. The error names the packages, which sends you looking for a package
+        # that was never missing.
+        #
+        # This has to come before the checkout-trust step below, because that step runs
+        # git — and a base-devel container does not have git until it is installed here.
+        # Placed first, it exited 127: command not found. Placed before the tools were
+        # installed, the ordering looks obviously right and is not.
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm go git tar zstd
+
       - name: Trust the checkout
         # Inside a container the workspace is owned by the runner's UID rather than
         # root, and git refuses to operate on a repository it considers possibly
@@ -195,15 +209,6 @@ jobs:
         # first git command — which reads as a broken checkout rather than as a
         # permission decision.
         run: git config --global --add safe.directory '*'
-
-      - name: Install build tools
-        # -Sy first: a fresh container has empty package databases, so `pacman -S`
-        # fails with "target not found" for every package, including ones that plainly
-        # exist. The error names the packages, which sends you looking for a package
-        # that was never missing.
-        run: |
-          pacman -Sy --noconfirm
-          pacman -S --noconfirm go git tar zstd
 
       - name: Derive the version and date from the tag
         id: meta
