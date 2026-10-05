@@ -143,15 +143,7 @@ formatters:
     - gofmt
     - gofumpt
     - goimports
-  settings:
-    gofumpt:
-      # Rewrite short if-else bodies onto one line, which this codebase uses
-      # deliberately for trivial branches.
-      extra:
-        rules:
-          group-params: true
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-dirs-use-default: false
