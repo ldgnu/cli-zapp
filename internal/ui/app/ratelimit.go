@@ -107,16 +107,6 @@ func (l *sendLimiter) allow(now time.Time) (bool, string) {
 	return true, ""
 }
 
-// record counts a send without enforcing the limit.
-//
-// Used for sends that are not the user's keystrokes — a retry, or a queued
-// message draining on connect. Those are already in flight; refusing them would
-// strand a message the user believes was sent.
-func (l *sendLimiter) record(now time.Time) {
-	l.sent = append(l.sent, now)
-	l.prune(now)
-}
-
 // inBurst counts the sends inside the burst window ending at now.
 func (l *sendLimiter) inBurst(now time.Time) int {
 	// The burst window is derived rather than stored: the burst allowance exists to

@@ -19,6 +19,7 @@ package whatsapp
 
 import (
 	"context"
+	"time"
 
 	"github.com/cli-zapp/cli-zapp/internal/models"
 )
@@ -171,8 +172,19 @@ type Event struct {
 	// Connection is set for [EventConnection].
 	Connection ConnectionState
 
-	// Err is set for [EventError].
+	// Err is set for [EventError] and for a pairing rejection.
 	Err error
+
+	// Until is the expiry carried by [EventBanned], and zero for every other kind.
+	//
+	// It is a field rather than an error because a ban is not a failure to report, it
+	// is a period to count down. Rendering it as an error produces a spinner, and a
+	// spinner makes the user restart the program — which turns a temporary ban into a
+	// permanent one.
+	Until time.Duration
+
+	// Reason is a short human-readable explanation, where one exists.
+	Reason string
 }
 
 // EventKind identifies an [Event]'s payload.
@@ -195,6 +207,21 @@ const (
 	EventChatUpdate
 	// EventConnection carries the session state.
 	EventConnection
+	// EventPaired carries a successful link, carrying Connection in the online state.
+	EventPaired
+	// EventPairFailed carries a pairing rejection, with Err set.
+	EventPairFailed
+	// EventUnpaired carries the phone having forgotten this device, with Err set to
+	// the reason. Distinct from EventPaired failing: the account is no longer usable
+	// and the UI must return to pairing rather than retry.
+	EventUnpaired
+	// EventBanned carries a temporary ban, with Until set to the expiry.
+	//
+	// A first-class kind rather than an error because the UI's obligation is different:
+	// it must show a countdown and stop inviting a retry, not offer "try again".
+	EventBanned
+	// EventReplaced carries another session taking over these keys.
+	EventReplaced
 	// EventError carries a non-fatal failure.
 	EventError
 )

@@ -195,7 +195,16 @@ func (m *Model) setEvents(events []whatsapp.Event) tea.Cmd {
 	)
 
 	for _, e := range events {
+		// Partial on purpose: the pairing, ban and replacement events are emitted by the
+		// protocol adapter but have no handler yet — they need the pairing view, which
+		// is the next piece of work. Naming them as explicit no-ops is the point: a
+		// silent switch is how a new event goes unhandled for a year unnoticed.
 		switch e.Kind {
+		case whatsapp.EventPaired, whatsapp.EventPairFailed, whatsapp.EventUnpaired,
+			whatsapp.EventBanned, whatsapp.EventReplaced:
+			// Recognised and deliberately ignored. The status bar already reflects
+			// connection state, and a ban's countdown belongs to the pairing view.
+
 		case whatsapp.EventMessage:
 			if e.ChatID == m.currentChatID() {
 				openChanged = true
