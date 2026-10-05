@@ -202,24 +202,31 @@ jobs:
           pacman -Sy --noconfirm
           pacman -S --noconfirm go git tar zstd
 
-      - name: Trust the checkout
-        # Inside a container the workspace is owned by the runner's UID rather than
-        # root, and git refuses to operate on a repository it considers possibly
-        # hijacked. The failure is exit 128, "detected dubious ownership", on the very
-        # first git command — which reads as a broken checkout rather than as a
-        # permission decision.
-        run: git config --global --add safe.directory '*'
-
-      - name: Derive the version and date from the tag
+      - name: Derive the version from the tag
         id: meta
+        # No git in this step, deliberately.
+        #
+        # This job runs inside a container where the workspace is a bind mount, and
+        # git's repository discovery stops at the filesystem boundary: "Stopping at
+        # filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set)", exit 128.
+        # safe.directory does not help, because the problem is not ownership.
+        #
+        # The version comes from the tag string, which needs no repository at all, and
+        # the commit is left out rather than faked: the PKGBUILD treats it as optional,
+        # and this job's purpose is to prove the recipe builds and produces a working
+        # binary for a real pkgver. The release job — which is not in a container —
+        # embeds the commit and build date in the artifacts that actually ship.
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          epoch="$(git log -1 --format=%ct)"
+          tag="${{ github.event.inputs.ref || github.ref_name }}"
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::$tag is not a SemVer tag"
+            exit 1
+          fi
           {
             echo "version=$version"
-            echo "commit=$(git rev-parse --short HEAD)"
-            echo "build_date=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
+            echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build the PKGBUILD with makepkg
@@ -242,7 +249,6 @@ jobs:
             env \
               "SRC_DIR=$GITHUB_WORKSPACE" \
               "PKGVER_OVERRIDE=${{ steps.meta.outputs.version }}" \
-              "COMMIT=${{ steps.meta.outputs.commit }}" \
               "BUILD_DATE=${{ steps.meta.outputs.build_date }}"
           ls -la ./*.pkg.tar.zst
 
