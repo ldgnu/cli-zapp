@@ -346,10 +346,18 @@ jobs:
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
-          name: cli-zapp ${{ github.ref_name }}
+          # tag_name is explicit because a dispatch has no tag in github.ref.
+          #
+          # Without it the action falls back to GITHUB_REF_NAME, which for a dispatch is
+          # the branch — and it fails with "GitHub Releases requires a tag", an error
+          # that names the problem and not the cause. A release workflow that only works
+          # when triggered one way is a workflow that cannot be re-run, which is the
+          # whole reason workflow_dispatch exists.
+          tag_name: ${{ github.event.inputs.ref || github.ref_name }}
+          name: cli-zapp ${{ github.event.inputs.ref || github.ref_name }}
           body_path: dist/RELEASE_NOTES.md
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(github.event.inputs.ref || github.ref_name, '-') }}
           files: |
             dist/cli-zapp-linux-amd64.tar.gz
             dist/cli-zapp-linux-arm64.tar.gz
