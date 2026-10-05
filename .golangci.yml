@@ -79,6 +79,8 @@ linters:
       ignore-rules:
         - comando
         - comandos
+        - clientes
+        - producto
         - dialogs
         - diálogo
 

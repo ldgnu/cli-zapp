@@ -11,16 +11,20 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
+	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"github.com/cli-zapp/cli-zapp/internal/keybindings"
 	"github.com/cli-zapp/cli-zapp/internal/logging"
 	"github.com/cli-zapp/cli-zapp/internal/notifications"
+	"github.com/cli-zapp/cli-zapp/internal/store"
 	"github.com/cli-zapp/cli-zapp/internal/ui/app"
 	"github.com/cli-zapp/cli-zapp/internal/ui/theme"
 	"github.com/cli-zapp/cli-zapp/internal/whatsapp"
+	"github.com/cli-zapp/cli-zapp/internal/whatsapp/adapter"
 )
 
 // Build metadata, injected at link time with -ldflags "-X main.<name>=...".
@@ -45,7 +49,15 @@ type config struct {
 	// Phase 1 ships with no protocol adapter, so this is the default. When the
 	// adapter lands it becomes opt-in, and the flag stays so that the UI can be
 	// exercised without linking an account.
+	//
+	// Still the default: pairing is irreversible, and a program that contacts
+	// WhatsApp on startup without being asked would be a bad neighbour on a shared
+	// machine.
 	demo bool
+
+	// live runs against a linked account. Opt-in, because asking for the network has
+	// to be a deliberate act rather than the absence of a flag.
+	live bool
 
 	color    string
 	glyphs   string
@@ -67,6 +79,17 @@ func main() {
 }
 
 func run() error {
+	// Subcommands are checked before flags.
+	//
+	// They have to be, because `pair` and `unpair` are the two operations that change
+	// something irreversible on someone else's account, and routing them through the
+	// flag parser would let `cli-zapp --phone +549... pair` mean something other than
+	// what it reads as.
+	args := os.Args[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return runSubcommand(args[0], args[1:])
+	}
+
 	cfg := parseFlags()
 
 	log, closeLog, err := logging.New(logging.Options{
@@ -100,15 +123,21 @@ func run() error {
 		return err
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	deps := whatsapp.Services{}
 
-	if cfg.demo {
+	switch {
+	case cfg.live:
+		deps, err = liveServices(ctx)
+		if err != nil {
+			return err
+		}
+	case cfg.demo:
 		fake := app.DemoData()
 		deps = fake.Services()
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	model := app.New(deps, t, keys)
 	model.SetNotifier(notifier)
@@ -155,6 +184,7 @@ func parseFlags() config {
 	fs.StringVar(&cfg.logFile, "log", "", "log file path (default: a temporary file)")
 
 	fs.BoolVar(&cfg.demo, "demo", true, "run against in-memory demo data")
+	fs.BoolVar(&cfg.live, "live", false, "run against a linked WhatsApp account")
 	fs.BoolVar(&cfg.showHelp, "help-keys", false, "print the default keybindings and exit")
 	fs.BoolVar(&cfg.showVersion, "version", false, "print version information and exit")
 
@@ -164,7 +194,19 @@ func parseFlags() config {
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "cli-zapp %s — a WhatsApp client for the terminal\n\n", version)
-		fmt.Fprintf(fs.Output(), "Usage:\n  cli-zapp [flags]\n\nFlags:\n")
+		fmt.Fprint(fs.Output(), `Usage:
+  cli-zapp [flags]
+  cli-zapp pair --phone <número>
+  cli-zapp unpair
+  cli-zapp keys
+
+Subcommands:
+  pair      link this device to an account
+  unpair    unlink this device
+  keys      print the default keybindings as TOML
+
+Flags:
+`)
 		fs.PrintDefaults()
 	}
 
@@ -282,4 +324,100 @@ func cut(a keybindings.Action) (string, string, bool) {
 		}
 	}
 	return s, "", false
+}
+
+// runSubcommand dispatches a subcommand.
+//
+// It returns an error rather than calling os.Exit, so that the deferred log close and
+// the deferred cancel in run() still happen. A subcommand that skipped them would leave
+// a log file open and, worse, would have to duplicate the exit-code logic.
+func runSubcommand(name string, args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	switch name {
+	case "pair":
+		return runPair(ctx, args)
+	case "unpair":
+		return runUnpair(ctx)
+	case "keys":
+		printKeybindings()
+		return nil
+	case "help":
+		printUsage()
+		return nil
+	default:
+		return fmt.Errorf("unknown subcommand %q; try: pair, unpair, keys", name)
+	}
+}
+
+// printUsage writes the help text without a flag set.
+func printUsage() {
+	cfg := parseFlags
+	_ = cfg
+	fmt.Print(`cli-zapp — a WhatsApp client for the terminal
+
+Usage:
+  cli-zapp [flags]
+  cli-zapp pair --phone <número>
+  cli-zapp unpair
+  cli-zapp keys
+
+Flags:
+  --live                run against a linked account (default: demo data)
+  --demo                run against in-memory demo data
+  --version             print version information
+  --color=dark|light    colour scheme
+  --glyphs=unicode|ascii
+  --debug, --verbose    log level
+  --log=PATH            log file
+  --help-keys           print the default keybindings as TOML
+
+Read SECURITY.md before linking an account: this speaks an unofficial protocol and
+carries a real risk of a temporary or permanent account ban.
+`)
+}
+
+// liveServices opens the device store, connects, and returns the service bundle.
+//
+// The order matters and is not interchangeable. The store is opened first because it is
+// what tells us whether a device is linked at all; connecting before that check would
+// mean opening a websocket for an account that does not exist yet.
+//
+// A missing pairing is reported with the exact command to run, not as a generic
+// failure. "Not paired" with no next step is the kind of error that costs someone half
+// an hour of reading documentation.
+func liveServices(ctx context.Context) (whatsapp.Services, error) {
+	paths, err := store.Default()
+	if err != nil {
+		return whatsapp.Services{}, err
+	}
+	if err := paths.Ensure(); err != nil {
+		return whatsapp.Services{}, err
+	}
+
+	client, err := adapter.New(ctx, paths, waLog.Noop)
+	if err != nil {
+		return whatsapp.Services{}, fmt.Errorf("opening the device store: %w", err)
+	}
+
+	if !client.Paired() {
+		_ = client.Close()
+		return whatsapp.Services{}, fmt.Errorf(
+			"no hay ninguna cuenta enlazada en %s\n"+
+				"       vinculá una con:  cli-zapp pair --phone +<código de país y número>",
+			paths.Devices)
+	}
+
+	if _, err := client.Connect(ctx); err != nil {
+		_ = client.Close()
+		return whatsapp.Services{}, fmt.Errorf("conectando: %w", err)
+	}
+
+	services := adapter.NewServices(client)
+	if err := services.Sync.Start(ctx); err != nil {
+		_ = client.Close()
+		return whatsapp.Services{}, err
+	}
+	return services, nil
 }

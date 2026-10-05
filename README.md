@@ -142,9 +142,19 @@ make install DESTDIR=/tmp/stage
 ## Usage
 
 ```sh
+cli-zapp pair --phone +<código de país y número>   # link this device
+cli-zapp unpair                                    # unlink it
+cli-zapp keys                                      # the default keybindings
+
+cli-zapp                                           # demo data (default)
+cli-zapp --live                                    # a linked account
+```
+
+```sh
 cli-zapp [flags]
 
   --version        print version information and exit
+  --live           run against a linked WhatsApp account
   --demo           run against in-memory demo data (default true)
   --color=dark     colour scheme: dark or light
   --glyphs=unicode glyph set: unicode or ascii
@@ -176,6 +186,34 @@ make frame COLS=92 ROWS=26 KEYS="ctrl+p"    # print one frame, exactly as render
 pressed first. It is how layout is reviewed.
 
 ---
+
+## Linking an account
+
+```sh
+cli-zapp pair --phone +<código de país y número>
+```
+
+The command shows the ban risk before it touches the network and asks for
+confirmation. Read [SECURITY.md](SECURITY.md) first — the worst case is not a ban but
+losing the ability to link any client at all, including the official web one, which is
+what happened to another vendor's users for five months.
+
+Pairing is by **code**, not QR: the code takes eight keystrokes on the phone and works
+in every terminal, including one over SSH with no graphics. A QR encoder is a few
+hundred lines that cannot be verified in this repository, and a subtly wrong one
+produces a picture that looks right and does not scan.
+
+Where things are stored:
+
+| | |
+| --- | --- |
+| `~/.config/cli-zapp/` | settings (nothing yet) |
+| `~/.local/share/cli-zapp/` | message cache, chat metadata — `0700` |
+| `~/.local/share/cli-zapp/devices.db` | the linked session — `0600` |
+
+The device store is credential material. `.gitignore` excludes `*.db`, and
+`scripts/backup.sh` derives its contents from git, so a session database cannot end up
+in a backup.
 
 ## Configuration
 

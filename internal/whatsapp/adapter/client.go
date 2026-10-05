@@ -44,6 +44,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -87,7 +88,7 @@ var ErrNotPaired = errors.New("not paired with a WhatsApp account")
 // on a real account, and the UI has to show that rather than appear to hang. It also
 // needs a device store on disk, so it cannot be done before the user has a data
 // directory.
-func New(p store.Paths, log waLog.Logger) (*Client, error) {
+func New(ctx context.Context, p store.Paths, log waLog.Logger) (*Client, error) {
 	// "sqlite3" is the Drizzle dialect name for SQLite, not a driver reference: the
 	// driver is whatever *sql.DB was opened with, and that is the pure-Go one.
 	db, err := sql.Open("sqlite", p.Devices+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
@@ -101,18 +102,41 @@ func New(p store.Paths, log waLog.Logger) (*Client, error) {
 	// SQLITE_BUSY under load rather than as anything recognisable.
 	db.SetMaxOpenConns(1)
 
-	// NewWithDB does not return an error: the schema is created on first use. That
-	// deferral is why the store has to be exercised before it can be called working,
-	// and why the pairing view's first connection can take a moment on a cold start.
 	container := sqlstore.NewWithDB(db, "sqlite3", log)
+
+	// Upgrade creates and migrates the schema, and it has to be called explicitly.
+	//
+	// NewWithDB does not do it: it only wraps a connection. sqlstore.New calls Upgrade
+	// internally, but taking that path means giving up the *sql.DB and with it the
+	// one-connection cap above — which is the whole reason for opening the database by
+	// hand. Skipping Upgrade instead is not an option either: GetFirstDevice queries
+	// whatsmeow_device, so on a fresh install it fails with "no such table", and a
+	// first-run user sees a SQL error instead of a pairing prompt.
+	if err := container.Upgrade(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("preparing the device store at %s: %w", p.Devices, err)
+	}
+
+	// Tighten the file's own permissions, now that it exists.
+	//
+	// This has to happen after Upgrade rather than after sql.Open, because sql.Open is
+	// lazy: it does not create the file, so a chmod placed there is a silent no-op on a
+	// fresh install — which is exactly the install where it matters most.
+	//
+	// SQLite creates a database 0644 minus the umask. The 0700 directory around it is
+	// the real protection, since a file cannot be reached through a directory that
+	// cannot be listed or traversed, but "the parent happens to be locked" is not the
+	// same guarantee as "this file is not readable" and store.Paths promises the latter.
+	//
+	// Best-effort on purpose: a filesystem without Unix permissions fails here, and
+	// refusing to run would be worse than running with a warning-worthy default.
+	if err := os.Chmod(p.Devices, 0o600); err != nil {
+		log.Warnf("could not restrict permissions on the device store: %v", err)
+	}
 
 	// GetFirstDevice is what makes this an account rather than a multi-device relay:
 	// the first linked device is the identity, and subsequent sessions reuse it.
-	//
-	// This is the call that creates the tables, so it is also where a fresh install
-	// does its first write — hence the error being worth surfacing now rather than
-	// letting the first real operation fail.
-	device, err := container.GetFirstDevice(context.Background())
+	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("reading the device: %w", err)

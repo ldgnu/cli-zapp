@@ -7,7 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `cli-zapp pair --phone <número>` — links this device to an account.
+- `cli-zapp unpair` — unlinks it.
+- `cli-zapp keys` and `cli-zapp help` — subcommands rather than flags, because
+  `pair` and `unpair` change something irreversible on someone else's account and
+  should be something you type deliberately.
+- `--live` — runs against a linked account. Still opt-in: pairing is irreversible and
+  a program that contacts WhatsApp on startup without being asked would be a bad
+  neighbour on a shared machine.
+
+The pairing screen shows the ban risk **before anything touches the network**, names the
+worse case (the account losing the ability to link any client at all, which is what
+happened to another vendor's users for five months), and asks. `--yes` skips it for
+scripts that have already made the decision.
+
+A closed stdin counts as "no". The prompt guards an irreversible action, so nobody
+answering must resolve to doing nothing.
+
+### Fixed
+
+- **A first run failed with a SQL error.** `sqlstore.NewWithDB` only wraps a
+  connection; the schema is created by `Upgrade`, which is called separately. Without
+  it, `GetFirstDevice` fails with "no such table" and a first-time user sees a database
+  error instead of a pairing prompt.
+- **The device store was world-readable.** SQLite creates a database 0644 minus the
+  umask, and the chmod was placed after `sql.Open` — which is lazy and does not create
+  the file, so it was a silent no-op on exactly the installs where it mattered. Now
+  0600, applied after the migration.
+- **`--phone` only worked with an equals sign**, so the form printed in the warning
+  itself did not work.
+- **A pairing code was chunked raggedly.** Fixed groups of four stranded a lone letter
+  when the length was not a multiple of four; the real code is eight characters. Split
+  into two equal halves instead, which works whatever the length.
+
+### Known issues
+
+- **No QR pairing.** The pairing-code route works everywhere including over SSH. A QR
+  encoder is a few hundred lines that cannot be verified here — nothing in the
+  repository can scan a code, so a subtly wrong encoder produces a picture that looks
+  right and does not scan, and the user cannot tell the code is broken. Adding it later
+  means a vetted dependency or a golden-vector test against another implementation.
+- **No history sync yet.** `--live` connects and receives events, but the conversation
+  list is empty because the set of chats *is* app state and nothing fetches it. That is
+  the next piece of work.
 
 ## [0.1.0] - 2026-10-04
 
