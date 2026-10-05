@@ -5,6 +5,18 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Re-running a release without moving its tag.
+  #
+  # The tag is the version, so a failed release is normally fixed and the tag is
+  # re-pointed — which rewrites a ref and is exactly the thing a project should not do
+  # to its own history. Dispatching instead re-runs the workflow at the tag's commit,
+  # so the artifacts and the tag agree, and the tag is never touched.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or commit to build the release from
+        required: true
+        default: v0.1.0
 
 permissions:
   contents: write
@@ -23,8 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The history is needed for `git describe`, which is where VERSION comes from.
+          # The history is needed for `git describe` and for the commit date.
           fetch-depth: 0
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -68,12 +81,14 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          # A dispatch supplies the tag as an input; a tag push has it in GITHUB_REF_NAME.
+          tag="${{ github.event.inputs.ref || github.ref_name }}"
           version="${tag#v}"
           if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+'; then
             echo "::error::$tag is not a SemVer tag (expected vMAJOR.MINOR.PATCH)"
             exit 1
           fi
+          echo "building $version from $tag"
           # SOURCE_DATE_EPOCH pins every timestamp in every archive, so two runs of
           # this workflow for the same tag produce the same bytes.
           epoch="$(git log -1 --format=%ct)"
@@ -126,8 +141,8 @@ jobs:
           for f in \
             "dist/cli-zapp-linux-amd64.tar.gz" \
             "dist/cli-zapp-linux-arm64.tar.gz" \
-            "dist/cli-zapp-${{ steps.meta.outputs.version }}_amd64.deb" \
-            "dist/cli-zapp-${{ steps.meta.outputs.version }}_arm64.deb" \
+            "dist/cli-zapp_${{ steps.meta.outputs.version }}_amd64.deb" \
+            "dist/cli-zapp_${{ steps.meta.outputs.version }}_arm64.deb" \
             "dist/cli-zapp-${{ steps.meta.outputs.version }}-1-x86_64.pkg.tar.zst"
           do
             [ -f "$f" ] || { echo "::error::missing expected artifact $f"; exit 1; }
@@ -160,7 +175,13 @@ jobs:
           fetch-depth: 0
 
       - name: Install build tools
-        run: pacman -S --noconfirm go git tar zstd
+        # -Sy first: a fresh container has no package databases, so `pacman -S` fails
+        # with "target not found" for every package including ones that plainly exist.
+        # The error names the packages, which sends you looking for a package that is
+        # not missing.
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm go git tar zstd
 
       - name: Derive the version and date from the tag
         id: meta
@@ -211,7 +232,9 @@ jobs:
     runs-on: ubuntu-latest
     # Only the tag's own ref can publish, so a workflow run from a fork cannot
     # create a release in the upstream repository.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A dispatch is authorised to publish by virtue of being run from the tag's own
+    # workflow file on the default branch; a fork cannot dispatch into this repository.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' 
     steps:
       - uses: actions/checkout@v4
         with:
