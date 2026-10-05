@@ -156,11 +156,32 @@ jobs:
     container: archlinux:base-devel
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build tools
         run: pacman -S --noconfirm go git tar zstd
 
+      - name: Derive the version and date from the tag
+        id: meta
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          epoch="$(git log -1 --format=%ct)"
+          {
+            echo "version=$version"
+            echo "commit=$(git rev-parse --short HEAD)"
+            echo "build_date=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build the PKGBUILD with makepkg
+        # The real tag, not a placeholder. A hardcoded 0.0.0 here meant the recipe was
+        # validated against a version nobody ships, so a PKGBUILD broken only for a
+        # real pkgver — a digit count crossing a boundary, a hyphen — would pass CI and
+        # fail for the maintainer who copies it into the AUR.
+        #
+        # COMMIT and BUILD_DATE are passed so the packaged binary is traceable, which
+        # is the same reason the release job's own Arch package passes them.
         run: |
           set -euo pipefail
           cd packaging/arch
@@ -170,8 +191,20 @@ jobs:
             --clean \
             --holdver \
             --noprogressbar \
-            env "SRC_DIR=$GITHUB_WORKSPACE" "PKGVER_OVERRIDE=0.0.0"
+            env \
+              "SRC_DIR=$GITHUB_WORKSPACE" \
+              "PKGVER_OVERRIDE=${{ steps.meta.outputs.version }}" \
+              "COMMIT=${{ steps.meta.outputs.commit }}" \
+              "BUILD_DATE=${{ steps.meta.outputs.build_date }}"
           ls -la ./*.pkg.tar.zst
+
+      - name: The packaged binary must know what it is
+        run: |
+          set -euo pipefail
+          pkg=$(ls ./*.pkg.tar.zst | head -1)
+          tmp=$(mktemp -d)
+          tar --use-compress-program=unzstd -xf "$pkg" -C "$tmp"
+          "$tmp/usr/bin/cli-zapp" --version
 
   publish:
     needs: [build, arch-package]

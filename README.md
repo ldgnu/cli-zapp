@@ -7,10 +7,18 @@ left, the conversation on the right, bubbles, timestamps, delivery marks and
 presence. It runs on Linux, builds to a static binary with no C toolchain, and
 keeps its state in a local SQLite database.
 
-> **Status: Phase 1.** The interface, the keybinding system and the domain model
-> are complete and tested. The protocol adapter is not yet implemented, so the
-> application currently runs against an in-memory fake. See
-> [Roadmap](#roadmap) and [Limitations](docs/LIMITATIONS.md).
+> **Status: 0.1.0.** The interface, the keybinding system and the domain model are
+> complete and tested, and the protocol adapter is written — `cli-zapp pair` links a
+> device and `cli-zapp --live` connects.
+>
+> **`--live` does not yet populate the conversation list.** The set of chats *is* app
+> state in WhatsApp's model, and history sync is not written; messages that arrive
+> appear, the list of conversations stays empty. Clipboard **copy** works, bracketed
+> paste does not. Both are the next pieces of work — see
+> [Limitations](docs/LIMITATIONS.md) and [Roadmap](#roadmap).
+>
+> Until then `cli-zapp` with no flags runs against in-memory demo data, and the whole
+> interface is usable.
 
 The interface decisions and their reasoning are in
 [docs/UX.md](docs/UX.md); the layering is in
@@ -726,11 +734,13 @@ gets switched off within a week, after which it catches nothing.
 | --- | --- | --- |
 | 0 | Foundations: tooling, lint, CI, `models`, `keybindings`, `text` | done |
 | 1 | `theme`, `layout`, regions, root model, command palette, demo data | done |
-| 2 | `storage/sqlite`: schema, migrations, repositories | next |
-| 3 | `whatsapp/adapter`: pairing, sync engine, send/receive | |
-| 4 | Full loop against a real account | |
-| 5 | Persistence wired into the UI: offline history, search index | |
-| 6 | Media, keyring, voice notes | |
+| 2 | Packaging: Makefile, Arch, Debian, release workflow, backup | done |
+| 3 | `whatsapp/adapter`: store, client lifecycle, all six services | done |
+| 4 | Pairing, `--live`, the send rate limiter | done |
+| 5 | **History sync**, so the conversation list populates | next |
+| 6 | Persistence in the UI: offline history, search index | |
+| 7 | Clipboard paste: bracketed paste, `ctrl+shift+v`, native selection | |
+| 8 | Media download, keyring, voice notes | |
 
 The whole of Phase 1's scope is built and tested, including the features the original
 plan deferred to Phases 5 and 6 — reactions, edit, delete, reply, groups, search,

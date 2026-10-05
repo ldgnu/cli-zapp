@@ -7,62 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+Nothing yet.
 
-- `cli-zapp pair --phone <número>` — links this device to an account.
-- `cli-zapp unpair` — unlinks it.
-- `cli-zapp keys` and `cli-zapp help` — subcommands rather than flags, because
-  `pair` and `unpair` change something irreversible on someone else's account and
-  should be something you type deliberately.
-- `--live` — runs against a linked account. Still opt-in: pairing is irreversible and
-  a program that contacts WhatsApp on startup without being asked would be a bad
-  neighbour on a shared machine.
+## [0.1.0] - 2026-10-05
 
-The pairing screen shows the ban risk **before anything touches the network**, names the
-worse case (the account losing the ability to link any client at all, which is what
-happened to another vendor's users for five months), and asks. `--yes` skips it for
-scripts that have already made the decision.
+First tagged release.
 
-A closed stdin counts as "no". The prompt guards an irreversible action, so nobody
-answering must resolve to doing nothing.
+**What works:** the whole interface against demo data, and pairing — `cli-zapp pair`
+links a device, `cli-zapp --live` connects and receives protocol events.
 
-### Fixed
+**What does not yet:** `--live` shows an empty conversation list. The set of chats *is*
+app state, and history sync is not written; messages you receive appear, the list of
+conversations does not populate. Clipboard **copy** works (`wl-copy`, `xclip`, `xsel`,
+`pbcopy`, `clip.exe`) but bracketed paste and `ctrl+shift+v` do not.
 
-- **A first run failed with a SQL error.** `sqlstore.NewWithDB` only wraps a
-  connection; the schema is created by `Upgrade`, which is called separately. Without
-  it, `GetFirstDevice` fails with "no such table" and a first-time user sees a database
-  error instead of a pairing prompt.
-- **The device store was world-readable.** SQLite creates a database 0644 minus the
-  umask, and the chmod was placed after `sql.Open` — which is lazy and does not create
-  the file, so it was a silent no-op on exactly the installs where it mattered. Now
-  0600, applied after the migration.
-- **`--phone` only worked with an equals sign**, so the form printed in the warning
-  itself did not work.
-- **The Arch package was not traceable to a commit.** The `.deb` path passes
-  `main.commit` and `main.buildDate`; the PKGBUILD hardcoded only `main.version`, so an
-  installed Arch copy reported `commit: unknown` and `built: unknown` — precisely the two
-  fields SECURITY.md tells a user to quote in a bug report, and precisely what you need
-  to tell whether an installed copy is affected by a fix. Caught by unpacking the
-  package and asking the binary, not by anything the build reported.
-- **A pairing code was chunked raggedly.** Fixed groups of four stranded a lone letter
-  when the length was not a multiple of four; the real code is eight characters. Split
-  into two equal halves instead, which works whatever the length.
-
-### Known issues
-
-- **No QR pairing.** The pairing-code route works everywhere including over SSH. A QR
-  encoder is a few hundred lines that cannot be verified here — nothing in the
-  repository can scan a code, so a subtly wrong encoder produces a picture that looks
-  right and does not scan, and the user cannot tell the code is broken. Adding it later
-  means a vetted dependency or a golden-vector test against another implementation.
-- **No history sync yet.** `--live` connects and receives events, but the conversation
-  list is empty because the set of chats *is* app state and nothing fetches it. That is
-  the next piece of work.
-
-## [0.1.0] - 2026-10-04
-
-First tagged release. The interface and the release tooling; no account is linked
-yet.
+Read [SECURITY.md](../blob/main/SECURITY.md) before linking an account. This speaks an
+unofficial protocol, violates WhatsApp's Terms of Service, and carries a real risk of a
+temporary or permanent ban. Use a secondary number.
 
 ### Added
 
@@ -180,8 +141,13 @@ Deliberately not fixed in this release:
   audit in `docs/LIMITATIONS.md` asks for.
 - **Clipboard paste is not implemented.** Copy works (`wl-copy`, `xclip`, `xsel`,
   `pbcopy`, `clip.exe`). Bracketed paste and `ctrl+shift+v` do not.
-- **No protocol adapter.** The program runs against demo data; it cannot yet link
-  an account. This is the next phase, not a defect.
+- **No history sync.** `--live` connects and receives events, but nothing fetches the
+  chat list, because in WhatsApp's model the set of chats *is* app state. This is the
+  main remaining piece of work.
+- **No clipboard paste.** Copy works; bracketed paste and `ctrl+shift+v` do not.
+- **No QR pairing.** Pairing is by code, which works in every terminal including over
+  SSH. A QR encoder is a few hundred lines that cannot be verified in this repository,
+  and a subtly wrong one produces a picture that looks right and does not scan.
 - **Two release artifacts are not byte-reproducible.** The binaries and the `.deb`
   packages are; the `.tar.gz` wrappers and the `makepkg` Arch package are not. For
   the latter the cause is known — makepkg writes its own `builddate`. For the former
