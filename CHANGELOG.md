@@ -38,6 +38,12 @@ answering must resolve to doing nothing.
   0600, applied after the migration.
 - **`--phone` only worked with an equals sign**, so the form printed in the warning
   itself did not work.
+- **The Arch package was not traceable to a commit.** The `.deb` path passes
+  `main.commit` and `main.buildDate`; the PKGBUILD hardcoded only `main.version`, so an
+  installed Arch copy reported `commit: unknown` and `built: unknown` — precisely the two
+  fields SECURITY.md tells a user to quote in a bug report, and precisely what you need
+  to tell whether an installed copy is affected by a fix. Caught by unpacking the
+  package and asking the binary, not by anything the build reported.
 - **A pairing code was chunked raggedly.** Fixed groups of four stranded a lone letter
   when the length was not a multiple of four; the real code is eight characters. Split
   into two equal halves instead, which works whatever the length.

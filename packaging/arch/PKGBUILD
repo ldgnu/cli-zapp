@@ -53,6 +53,16 @@ if [ -n "${PKGVER_OVERRIDE:-}" ]; then
 	pkgver="$PKGVER_OVERRIDE"
 fi
 
+# The commit and build date, when the caller supplies them.
+#
+# Without these the packaged binary reports "commit: unknown" and "built: unknown" —
+# which is exactly the information SECURITY.md tells a user to quote in a bug report,
+# and exactly what you need to tell whether an installed copy is affected by a fix. The
+# .deb path has always passed them; the PKGBUILD passed only the version, so the two
+# packages disagreed about how traceable they were.
+_commit="${COMMIT:-}"
+_built="${BUILD_DATE:-}"
+
 # The tree the sources live in.
 #
 # makepkg runs build/check/package with the working directory set to $srcdir, where
@@ -77,8 +87,12 @@ build() {
 	#
 	# CGO_ENABLED=0 because the binary is then static and runs on any Linux of the
 	# same architecture with no libc version to match.
+	local ldflags="-s -w -X main.version=$pkgver-$pkgrel"
+	[[ -n "$_commit" ]] && ldflags="$ldflags -X main.commit=$_commit"
+	[[ -n "$_built" ]] && ldflags="$ldflags -X main.buildDate=$_built"
+
 	CGO_ENABLED=0 go build -buildvcs=false -trimpath \
-		-ldflags "-s -w -X main.version=$pkgver-$pkgrel" \
+		-ldflags "$ldflags" \
 		-o "$srcdir/usr/bin/$pkgname" \
 		./cmd/$pkgname
 }

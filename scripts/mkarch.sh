@@ -73,6 +73,8 @@ if command -v makepkg >/dev/null 2>&1 && [ -f "$root/packaging/arch/PKGBUILD" ];
 	    env \
 	      "SRC_DIR=$root" \
 	      "PKGVER_OVERRIDE=$pkgver" \
+	      "COMMIT=$commit" \
+	      "BUILD_DATE=$build_date" \
 	      "PKGDEST=$work/out" )
 
 	built=$(ls -1t "$work"/out/*.pkg.tar.* 2>/dev/null | head -1 || true)
